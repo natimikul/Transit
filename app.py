@@ -41,7 +41,7 @@ def load_all_sheets():
             df = pd.read_csv(f"{base_url}{s}")
             # Приведение дат к формату datetime.date для корректного сравнения
             if 'Дата счета' in df.columns:
-                df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
+              df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
             all_dfs[s] = df
         except Exception:
             all_dfs[s] = pd.DataFrame()
