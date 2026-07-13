@@ -32,8 +32,8 @@ st.title("📊 Система мониторинга статуса отгруз
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
     # Идентификатор вашей таблицы (замените на реальный)
-    spreadsheet_id = "https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHArLUX_ebADRfpNEY1SztmeBrc86KuysI/edit?gid=289794996#gid=289794996" 
-    base_url = f"https://google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
+        spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
+    базовый_урл = f"https://google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
     all_dfs = {}
     for s in sheets:
@@ -77,9 +77,10 @@ else:
 
 # Вспомогательная функция фильтрации по клиентам и датам
 def filter_base_data(dfs_list, search_clients=True):
-    combined_df = pd.concat([data_dict[sheet] for sheet in dfs_list if sheet in data_dict and not data_dict[sheet].empty], ignore_index=True)
-    if combined_df.empty:
-        return combined_df
+    valid_dfs = [data_dict[sheet] for sheet in dfs_list if sheet in data_dict and not data_dict[sheet].empty]
+    if not valid_dfs:
+        return pd.DataFrame()
+    combined_df = pd.concat(valid_dfs, ignore_index=True)
     
     # Фильтр по периоду (последние 30 дней по умолчанию или выбранный интервал)
     combined_df = combined_df[(combined_df['Дата счета'] >= start_date) & (combined_df['Дата счета'] <= end_date)]
