@@ -77,8 +77,8 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
         
     df_all = pd.concat(frames, ignore_index=True)
     
-    # Жесткий и безотказный перевод текстовых дат в формат для фильтрации
-       if 'Дата счета' in df_all.columns:
+     # Жесткий и безотказный перевод текстовых дат в формат для фильтрации
+     if 'Дата счета' in df_all.columns:
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         parsed_dates = pd.to_datetime(df_all['Дата счета'], format='%d.%m.%Y', errors='coerce')
         fallback_dates = pd.to_datetime(df_all['Дата счета'], dayfirst=True, errors='coerce')
