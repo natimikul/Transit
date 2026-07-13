@@ -85,12 +85,13 @@ def filter_base_data(dfs_list, search_clients=True):
     # Фильтр по периоду (последние 30 дней по умолчанию или выбранный интервал)
     combined_df = combined_df[(combined_df['Дата счета'] >= start_date) & (combined_df['Дата счета'] <= end_date)]
     
-    # Фильтр по клиентам через запятую (регистронезависимый поиск подстроки)
+    # Сортировка по клиентам (частичное совпадение + поиск через запятую)
     if search_clients and client_input:
-        clients_list = [c.strip().lower() for c in client_input.split(",") if c.strip()]
+        clients_list = [c.strip().lower().replace(" ", "") for c in client_input.split(",") if c.strip()]
         if clients_list:
-            mask = combined_df['Клиент'].astype(str).str.lower().apply(lambda x: any(sub in x for sub in clients_list))
+            mask = combined_df['Клиент'].astype(str).apply(lambda x: any(sub in x.lower().replace(" ", "") for sub in clients_list))
             combined_df = combined_df[mask]
+
             
     return combined_df
 
