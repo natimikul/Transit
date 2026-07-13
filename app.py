@@ -74,15 +74,22 @@ else:
     start_date = date_range
     end_date = today
 
-   # Вспомогательная функция фильтрации по клиентам и датам
+# Вспомогательная функция фильтрации по клиентам и датам
 def filter_base_data(dfs_list, search_clients=True):
+    # Если база данных не создана или пуста, принудительно скачиваем её
+    try:
+        active_dict = data_dict
+    except NameError:
+        active_dict = load_all_sheets()
+        
     valid_dfs = []
     for name in dfs_list:
-        if name in data_dict and not data_dict[name].empty:
-            valid_dfs.append(data_dict[name])
+        if name in active_dict and not active_dict[name].empty:
+            valid_dfs.append(active_dict[name])
     if not valid_dfs:
         return pd.DataFrame()
     combined_df = pd.concat(valid_dfs, ignore_index=True)
+
     
     # Фильтр по периоду (последние 30 дней по умолчанию или выбранный интервал)
     combined_df = combined_df[(combined_df['Дата счета'] >= start_date) & (combined_df['Дата счета'] <= end_date)]
