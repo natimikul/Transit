@@ -15,16 +15,19 @@ def load_all_sheets():
     for s in sheets:
         try:
             df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig')
-            df.columns = [str(c).strip() for c in df.columns]
-            for col_name in df.columns:
-                if "Дата счета" in col_name:
-                    df.rename(columns={col_name: "Дата счета"}, inplace=True)
-                if "Клиент" in col_name:
-                    df.rename(columns={col_name: "Клиент"}, inplace=True)
+
+            
+            # Принудительно сопоставляем имена колонок, убирая любые скрытые символы
+            df.columns = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
+                          'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
+                          'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
+                          'Прибыл (факт)', 'Статус'] + list(df.columns[14:])
+                          
             all_dfs[s] = df
         except Exception:
             all_dfs[s] = pd.DataFrame()
     return all_dfs
+
 
 data_dict = load_all_sheets()
 
