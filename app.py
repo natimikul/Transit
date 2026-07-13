@@ -74,9 +74,12 @@ else:
     start_date = date_range
     end_date = today
 
-# Вспомогательная функция фильтрации по клиентам и датам
+   # Вспомогательная функция фильтрации по клиентам и датам
 def filter_base_data(dfs_list, search_clients=True):
-    valid_dfs = [data_dict[sheet] for sheet in dfs_list if sheet in data_dict and not data_dict[sheet].empty]
+    valid_dfs = []
+    for name in dfs_list:
+        if name in data_dict and not data_dict[name].empty:
+            valid_dfs.append(data_dict[name])
     if not valid_dfs:
         return pd.DataFrame()
     combined_df = pd.concat(valid_dfs, ignore_index=True)
