@@ -161,7 +161,7 @@ if st.session_state.current_report is not None:
                 st.session_state.show_email_modal = True
 
 # --- ОКНО ОПОВЕЩЕНИЯ (МОДАЛЬНЫЙ БЛОК) ---
-if st.get_value('show_email_modal', False):
+if st.session_state.get('show_email_modal', False):
     with st.expander("📬 Настройка отправки уведомлений", expanded=True):
         emails = st.text_input("Введите адреса электронной почты через запятую:")
         if st.button("🚀 Отправить сводку за сегодня"):
