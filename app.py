@@ -33,7 +33,7 @@ def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
     # Идентификатор вашей таблицы (замените на реальный)
     spreadsheet_id = "https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHArLUX_ebADRfpNEY1SztmeBrc86KuysI/edit?gid=289794996#gid=289794996" 
-    base_url = f"https://google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
+    base_url = f"https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHArLUX_ebADRfpNEY1SztmeBrc86KuysI/gviz/tq?tqx=out:csv&sheet="
     
     all_dfs = {}
     for s in sheets:
