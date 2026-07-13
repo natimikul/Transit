@@ -62,6 +62,8 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
         return pd.DataFrame()
     df_all = pd.concat(frames, ignore_index=True)
         if 'Дата счета' in df_all.columns:
+        df_all = pd.concat(frames, ignore_index=True)
+    if 'Дата счета' in df_all.columns:
         # Переводим календарь сайта в список текстовых дат, которые входят в выбранный период
         delta = end_filter - start_filter
         allowed_text_dates = [(start_filter + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta.days + 1)]
