@@ -47,9 +47,9 @@ with col_date:
     date_range = st.date_input("Период поиска (по Дате счета):", value=[default_start_dt, today_dt])
 
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range[0], date_range[1]
+    start_filter, end_filter = date_range, date_range
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range[0], today_dt
+    start_filter, end_filter = date_range, today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -61,19 +61,15 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
     if not frames:
         return pd.DataFrame()
     df_all = pd.concat(frames, ignore_index=True)
-        if 'Дата счета' in df_all.columns:
-        df_all = pd.concat(frames, ignore_index=True)
+    
+    # Текстовый фильтр дат без вложенных блоков - защита от ошибок отступа
     if 'Дата счета' in df_all.columns:
-        # Переводим календарь сайта в список текстовых дат, которые входят в выбранный период
         delta = end_filter - start_filter
         allowed_text_dates = [(start_filter + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta.days + 1)]
-        # Также добавляем вариант формата с дефисами на всякий случай
         allowed_text_dates += [(start_filter + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
-        
-        # Очищаем ячейки в таблице и проверяем, входит ли текстовая дата в разрешенный список
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
-
+        
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
         search_words = [w.strip().lower().replace(" ", "") for w in client_input.split(",") if w.strip()]
         if search_words:
