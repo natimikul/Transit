@@ -36,12 +36,17 @@ def load_all_sheets():
     base_url = f"https://docs.google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
     all_dfs = {}
-    for s in sheets:
+        for s in sheets:
         try:
             df = pd.read_csv(f"{base_url}{s}")
-            # Приведение дат к формату datetime.date для корректного сравнения
+            # Автоматическая очистка скрытых пробелов в названиях колонок
+            df.columns = df.columns.str.strip()
+            
+            # Диагностический вывод (покажет колонки прямо на сайте)
+            st.sidebar.write(f"Лист {s}, колонки:", list(df.columns[:4]))
+            
             if 'Дата счета' in df.columns:
-              df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
+                df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
             all_dfs[s] = df
         except Exception:
             all_dfs[s] = pd.DataFrame()
