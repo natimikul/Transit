@@ -31,19 +31,15 @@ st.title("📊 Система мониторинга статуса отгруз
 @st.cache_data(ttl=60)
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-    # Идентификатор вашей таблицы
-    spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
-    base_url = f"https://docs.google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
-    
+    spreadsheets_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
+    base_url = f"https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI/gviz/tq?tqx=out:csv&sheet="
+                            
     all_dfs = {}
-        for s in sheets:
+    for s in sheets:
         try:
-            df = pd.read_csv(f"{base_url}{s}")
-            # Автоматическая очистка скрытых пробелов в названиях колонок
+            # encoding='utf-8-sig' убирает невидимый мусор из заголовков Google таблиц
+            df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig')
             df.columns = df.columns.str.strip()
-            
-            # Диагностический вывод (покажет колонки прямо на сайте)
-            st.sidebar.write(f"Лист {s}, колонки:", list(df.columns[:4]))
             
             if 'Дата счета' in df.columns:
                 df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
@@ -51,8 +47,6 @@ def load_all_sheets():
         except Exception:
             all_dfs[s] = pd.DataFrame()
     return all_dfs
-
-data_dict = load_all_sheets()
 
 # --- 2. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ (SESSION STATE) ---
 if 'current_report' not in st.session_state:
