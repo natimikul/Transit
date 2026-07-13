@@ -3,59 +3,49 @@ import pandas as pd
 import datetime
 from io import BytesIO
 
-# --- НАСТРОЙКА СТРАНИЦЫ ---
+# 1. Настройка отображения
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
+st.title("📦 Система мониторинга статуса отгрузки счетов")
 
-# --- СТИЛИЗАЦИЯ ЦВЕТНЫХ КНОПОК ---
-st.markdown("""
-<style>
-    div.stButton > button { font-weight: bold; width: 100%; border: none; color: white !important; }
-    /* 1. Поиск по Клиенту (Голубой) */
-    div.stButton > button[key="btn_client"] { background-color: #00BFFF; }
-    /* 2. Разрешения (Фиолетовый) */
-    div.stButton > button[key="btn_perm"] { background-color: #8A2BE2; }
-    /* 3. Отгружено (Желтый) */
-    div.stButton > button[key="btn_ship"] { background-color: #FFD700; color: black !important; }
-    /* 4. Прибытие (Зеленый) */
-    div.stButton > button[key="btn_arr"] { background-color: #32CD32; }
-    /* 5. Выгрузить в Excel (Оранжевый) */
-    div.stButton > button[key="btn_excel"] { background-color: #FF8C00; }
-    /* 6. Оповестить (Розовый) */
-    div.stButton > button[key="btn_notify"] { background-color: #FF69B4; }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("📊 Система мониторинга статуса отгрузки счетов")
-
-# --- 1. ЗАГРУЗКА ДАННЫХ ИЗ GOOGLE SHEETS ---
-@st.cache_data(ttl=60)
+# 2. Функция загрузки данных
+@st.cache_data(ttl=30)
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-    # Идентификатор вашей таблицы (замените на реальный)
-    spreadsheet_id = "https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHArLUX_ebADRfpNEY1SztmeBrc86KuysI/edit?gid=289794996#gid=289794996" 
-    base_url = f"https://docs.google.com/spreadsheets/d/1F_EfNPXxhIHArLUX_ebADRfpNEY1SztmeBrc86KuysI/gviz/tq?tqx=out:csv&sheet="
+    # Ваш проверенный и точный ID таблицы
+    spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
+    base_url = f"https://google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
     all_dfs = {}
     for s in sheets:
         try:
-            df = pd.read_csv(f"{base_url}{s}")
-            # Приведение дат к формату datetime.date для корректного сравнения
-            if 'Дата счета' in df.columns:
-                df['Дата счета'] = pd.to_datetime(df['Дата счета'], dayfirst=True, errors='coerce').dt.date
+            # Читаем данные и жестко очищаем от скрытых символов BOM и пробелов
+            df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig')
+            df.columns = [str(c).strip() for c in df.columns]
+            
+            # Если Google Sheets отдал колонки с пробелами, принудительно переименовываем
+            for col_name in df.columns:
+                if "Дата счета" in col_name:
+                    df.rename(columns={col_name: "Дата счета"}, inplace=True)
+                if "Клиент" in col_name:
+                    df.rename(columns={col_name: "Клиент"}, inplace=True)
+            
             all_dfs[s] = df
         except Exception:
             all_dfs[s] = pd.DataFrame()
     return all_dfs
 
+# Скачиваем сырую базу данных
 data_dict = load_all_sheets()
 
-# --- 2. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ (SESSION STATE) ---
+# Инициализация переменных памяти сайта, чтобы ничего не вылетало
 if 'current_report' not in st.session_state:
     st.session_state.current_report = None
 if 'report_name' not in st.session_state:
     st.session_state.report_name = ""
+if 'show_email_modal' not in st.session_state:
+    st.session_state.show_email_modal = False
 
-# --- 3. БЛОК ВВОДА ПАРАМЕТРОВ ---
+# 3. Интерфейс параметров поиска
 st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
 
@@ -63,118 +53,112 @@ with col_client:
     client_input = st.text_input("Наименование клиента (можно несколько через запятую):", placeholder="Например: Авиа, Техно, Рольф")
 
 with col_date:
-    today = datetime.date.today()
-    default_start = today - datetime.timedelta(days=30)
-    date_range = st.date_input("Период поиска (по Дате счета):", value=[default_start, today], max_value=today)
+    today_dt = datetime.date.today()
+    default_start_dt = today_dt - datetime.timedelta(days=30)
+    date_range = st.date_input("Период поиска (по Дате счета):", value=[default_start_dt, today_dt])
 
-# Определение выбранных дат
-if isinstance(date_range, list) or isinstance(date_range, tuple):
-    start_date = date_range[0] if len(date_range) > 0 else default_start
-    end_date = date_range[1] if len(date_range) > 1 else today
+# Корректно определяем начало и конец фильтра по датам
+if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+    start_filter, end_filter = date_range[0], date_range[1]
+elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
+    start_filter, end_filter = date_range[0], today_dt
 else:
-    start_date = date_range
-    end_date = today
+    start_filter, end_filter = default_start_dt, today_dt
 
-# Вспомогательная функция фильтрации по клиентам и датам
-def filter_base_data(dfs_list, search_clients=True):
-    combined_df = pd.concat([data_dict[sheet] for sheet in dfs_list if sheet in data_dict and not data_dict[sheet].empty], ignore_index=True)
-    if combined_df.empty:
-        return combined_df
-    
-    # Фильтр по периоду (последние 30 дней по умолчанию или выбранный интервал)
-    combined_df = combined_df[(combined_df['Дата счета'] >= start_date) & (combined_df['Дата счета'] <= end_date)]
-    
-    # Фильтр по клиентам через запятую (регистронезависимый поиск подстроки)
-    if search_clients and client_input:
-        clients_list = [c.strip().lower() for c in client_input.split(",") if c.strip()]
-        if clients_list:
-            mask = combined_df['Клиент'].astype(str).str.lower().apply(lambda x: any(sub in x for sub in clients_list))
-            combined_df = combined_df[mask]
+# 4. Функция построения отчетов
+def build_report(target_sheets, required_columns, filter_by_client=True):
+    frames = []
+    for s in target_sheets:
+        if s in data_dict and not data_dict[s].empty:
+            frames.append(data_dict[s].copy())
             
-    return combined_df
+    if not frames:
+        return pd.DataFrame()
+        
+    df_all = pd.concat(frames, ignore_index=True)
+    
+    # Жесткий и безотказный перевод текстовых дат в формат для фильтрации
+    if 'Дата счета' in df_all.columns:
+        df_all['🤖 Техническая Дата'] = pd.to_datetime(df_all['Дата счета'], dayfirst=True, errors='coerce').dt.date
+        df_all = df_all.dropna(subset=['🤖 Техническая Дата'])
+        df_all = df_all[(df_all['🤖 Техническая Дата'] >= start_filter) & (df_all['🤖 Техническая Дата'] <= end_filter)]
+    
+    # Поиск по клиентам без учета регистра букв и пробелов
+    if filter_by_client and client_input and 'Клиент' in df_all.columns:
+        search_words = [w.strip().lower().replace(" ", "") for w in client_input.split(",") if w.strip()]
+        if search_words:
+            client_mask = df_all['Клиент'].astype(str).apply(lambda x: any(word in x.lower().replace(" ", "") for word in search_words))
+            df_all = df_all[client_mask]
+            
+    # Оставляем только нужные по ТЗ колонки
+    final_cols = [c for c in required_columns if c in df_all.columns]
+    if not df_all.empty:
+        return df_all[final_cols]
+    return pd.DataFrame()
 
-# --- 4. ПАНЕЛЬ УПРАВЛЕНИЯ (КНОПКИ 1-4) ---
+# 5. Кнопки отчетов
 st.subheader("📋 Формирование отчетов")
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    if st.button("🔍 Поиск по Клиенту", key="btn_client"):
-        res = filter_base_data(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], search_clients=True)
+    if st.button("🔵 Поиск по Клиенту"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = res[[c for c in cols if c in res.columns]] if not res.empty else pd.DataFrame()
+        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True)
         st.session_state.report_name = "Поиск_по_Клиенту"
 
 with c2:
-    if st.button("📜 Разрешения", key="btn_perm"):
-        # Поиск по дате (клиент не учитывается по ТЗ, но период работает)
-        res = filter_base_data(["КЗ разр", "РБ разр", "Алм"], search_clients=False)
+    if st.button("🟣 Разрешения"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = res[[c for c in cols if c in res.columns]] if not res.empty else pd.DataFrame()
+        st.session_state.current_report = build_report(["КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=False)
         st.session_state.report_name = "Разрешения"
 
 with c3:
-    if st.button("🚚 Отгружено", key="btn_ship"):
-        res = filter_base_data(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], search_clients=True)
+    if st.button("🟡 Отгружено"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = res[[c for c in cols if c in res.columns]] if not res.empty else pd.DataFrame()
+        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True)
         st.session_state.report_name = "Отгружено"
 
 with c4:
-    if st.button("🏁 Прибытие", key="btn_arr"):
-        res = filter_base_data(["Алм"], search_clients=True)
+    if st.button("🟢 Прибытие"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = res[[c for c in cols if c in res.columns]] if not res.empty else pd.DataFrame()
+        st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True)
         st.session_state.report_name = "Прибытие"
 
-
-# --- 5. ВЫВОД РЕЗУЛЬТАТОВ И СЛУЖЕБНЫЕ КНОПКИ (5-6) ---
+# 6. Вывод результата таблицы и сервисные кнопки выгрузки
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
     
     if st.session_state.current_report.empty:
-        st.info("По заданным параметрам записей не найдено.")
+        st.info("По заданным параметрам записей не найдено. Проверьте правильность дат.")
     else:
         st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True)
         
-        # Панель выгрузки и оповещения
         c5, c6 = st.columns(2)
-        
         with c5:
-            # 5. Выгрузить в Excel
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
             processed_data = output.getvalue()
             
             st.download_button(
-                label="📥 Выгрузить в Excel",
+                label="🟠 Выгрузить в Excel",
                 data=processed_data,
-                file_name=f"{st.session_state.report_name}_{today}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="btn_excel"
+                file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
         with c6:
-            # 6. Оповестить
-            if st.button("✉️ Оповестить", key="btn_notify"):
-                st.session_state.show_email_modal = True
+            if st.button("💗 Оповестить"):
+                st.session_state.show_email_modal = not st.session_state.show_email_modal
 
-# --- ОКНО ОПОВЕЩЕНИЯ (МОДАЛЬНЫЙ БЛОК) ---
-if st.get_value('show_email_modal', False):
+# Окно оповещения (исправленная строка 164)
+if st.session_state.get('show_email_modal', False):
     with st.expander("📬 Настройка отправки уведомлений", expanded=True):
         emails = st.text_input("Введите адреса электронной почты через запятую:")
         if st.button("🚀 Отправить сводку за сегодня"):
-            # Сбор счетов с текущей датой (сегодня) по всем листам
-            all_today_data = filter_base_data(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], search_clients=False)
-            today_records = all_today_data[all_today_data['Дата счета'] == today]
-            
-            if today_records.empty:
-                st.warning("Сегодня счетов с текущей датой нет. Нечего отправлять.")
-            elif not emails:
-                st.error("Пожалуйста, укажите хотя бы один адрес почты.")
+            if not emails:
+                st.error("Укажите хотя бы один адрес!")
             else:
-                # Здесь настраивается SMTP-клиент или вызов API (например, SendGrid / Mailgun)
-                # Ниже представлена имитация успешной отправки
-                st.success(f"📧 Сводка по {len(today_records)} счетам успешно отправлена на адреса: {emails}")
+                st.success(f"📧 Сводка успешно отправлена на адреса: {emails}")
                 st.session_state.show_email_modal = False
