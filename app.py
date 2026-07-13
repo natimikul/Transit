@@ -31,9 +31,9 @@ st.title("📊 Система мониторинга статуса отгруз
 @st.cache_data(ttl=60)
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-    # Идентификатор вашей таблицы (замените на реальный)
-        spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
-    базовый_урл = f"https://google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
+    # Идентификатор вашей таблицы
+    spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
+    base_url = f"https://docs.google.com{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
     all_dfs = {}
     for s in sheets:
