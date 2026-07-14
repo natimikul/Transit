@@ -29,6 +29,9 @@ def load_all_sheets():
     return all_dfs
 
 data_dict = load_all_sheets()
+st.write("Проверка связи с Google Таблицей. Доступные листы:", list(data_dict.keys()))
+if "Вну" in data_dict and not data_dict["Вну"].empty:
+    st.write("Первые 3 строчки листа 'Вну':", data_dict["Вну"].head(3))
 
 if 'current_report' not in st.session_state:
     st.session_state.current_report = None
