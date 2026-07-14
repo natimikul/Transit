@@ -2,49 +2,46 @@ import streamlit as st
 import pandas as pd
 import datetime
 from io import BytesIO
-import requests
 
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
 @st.cache_data(ttl=30)
 def load_all_sheets():
-    sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-    # Ссылка на публикацию ВСЕГО документа в формате XLSX
-    pub_url = "https://google.com"
+    # Каждому текстовому имени листа сопоставляем его системный gid при веб-публикации
+    # Если gid ваших листов отличаются, сайт скачает только первый (главный) лист
+    sheet_gids = {
+        "Вну": "0", 
+        "Бри-Дро": "1228744427", 
+        "КЗ разр": "1", 
+        "РБ разр", "2", 
+        "Алм": "3"
+    }
     
+    spreadsheet_id = "2PACX-1vQy_3jRua5liYZD1tk7nCWlSLhn_lbFjIucGcO-hxR3Z3DNvpgr32WYwurNJZ-InELLpicod-6wGIAD"
     all_dfs = {}
-    try:
-        response = requests.get(pub_url)
-        if response.status_code == 200:
-            # Читаем весь Excel файл в память
-            excel_file = BytesIO(response.content)
+    
+    for s, gid in sheet_gids.items():
+        # Формируем прямую ссылку на конкретный опубликованный CSV-лист по его GID
+        pub_url = f"https://google.com{spreadsheet_id}/pub?output=csv&gid={gid}"
+        try:
+            df = pd.read_csv(pub_url, encoding='utf-8-sig', header=None)
+            df = df.dropna(how='all').reset_index(drop=True)
             
-            for s in sheets:
-                try:
-                    # Читаем конкретный лист без заголовков, чтобы гибко его очистить
-                    df = pd.read_excel(excel_file, sheet_name=s, header=None)
-                    df = df.dropna(how='all').reset_index(drop=True)
-                    
-                    col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
-                                 'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
-                                 'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
-                                 'Прибыл (факт)', 'Статус']
-                    
-                    df.columns = col_names + list(range(len(df.columns) - len(col_names)))
-                    
-                    # Убираем строку заголовков, если она попала в данные
-                    if not df.empty and ('заявк' in str(df.iloc[0, 0]).lower() or 'счет' in str(df.iloc[0, 1]).lower()):
-                        df = df.iloc[1:].reset_index(drop=True)
-                        
-                    all_dfs[s] = df
-                except Exception:
-                    all_dfs[s] = pd.DataFrame()
-        else:
-            for s in sheets: all_dfs[s] = pd.DataFrame()
-    except Exception:
-        for s in sheets: all_dfs[s] = pd.DataFrame()
-        
+            col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
+                         'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
+                         'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
+                         'Прибыл (факт)', 'Статус']
+            
+            df.columns = col_names + list(range(len(df.columns) - len(col_names)))
+            
+            if not df.empty and ('заявк' in str(df.iloc[0]).lower() or 'счет' in str(df.iloc[0]).lower()):
+                df = df.iloc[1:].reset_index(drop=True)
+                
+            all_dfs[s] = df
+        except Exception:
+            all_dfs[s] = pd.DataFrame()
+            
     return all_dfs
 
 data_dict = load_all_sheets()
@@ -68,9 +65,9 @@ with col_date:
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
 
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range[0], date_range[1]
+    start_filter, end_filter = date_range, date_range
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range[0], today_dt
+    start_filter, end_filter = date_range, today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -93,11 +90,11 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-    if filter_by_client and client_input and 'Client' in df_all.columns:
+    if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
-            client_mask = df_all['Client'].apply(lambda x: any(word in clean_text(x) for word in search_words))
+            client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
             
     final_cols = [c for c in required_columns if c in df_all.columns]
