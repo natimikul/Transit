@@ -3,9 +3,19 @@ import pandas as pd
 import datetime
 from io import BytesIO
 
-# --- НАСТРОЙКА СТРАНИЦЫ ---
+# --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
+
+# Увеличиваем размер эмодзи-значков на кнопках через CSS стили
+st.markdown("""
+<style>
+    div.stButton > button p {
+        font-size: 24px !important;
+        font-weight: bold !important;
+    }
+</style>
+""", unsafe_unsafe_html=True)
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
 CORRECT_PASSWORD = "Password123"
@@ -35,7 +45,6 @@ sheet_urls = {
 
 # --- 3. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ ---
 data_dict = {}
-unique_clients_from_db = set()
 unique_statuses_from_db = set()
 
 for name, url in sheet_urls.items():
@@ -50,18 +59,17 @@ for name, url in sheet_urls.items():
         if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
             df = df.iloc[1:].reset_index(drop=True)
         
-        # Собираем уникальные значения для будущих выпадающих списков
-        if 'Клиент' in df.columns:
-            unique_clients_from_db.update(df['Клиент'].dropna().astype(str).str.strip().unique())
+        # Фильтруем статусы от мусора кода Google (убираем строки с формулами, скриптами, скобками и пустотой)
         if 'Статус' in df.columns:
-            unique_statuses_from_db.update(df['Статус'].dropna().astype(str).str.strip().unique())
-            
+            for s_val in df['Статус'].dropna().astype(str).unique():
+                s_clean = s_val.strip()
+                if s_clean and not any(char in s_clean for char in ['{', '}', '(', ')', ';', '=', ':']):
+                    unique_statuses_from_db.add(s_clean)
+                    
         data_dict[name] = df
     except Exception:
         data_dict[name] = pd.DataFrame()
 
-# Превращаем во множества списков для мультиселектов
-list_all_clients = sorted(list(unique_clients_from_db))
 list_all_statuses = sorted(list(unique_statuses_from_db))
 
 # --- 4. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
@@ -74,22 +82,20 @@ st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
 
 with col_client:
-    client_input = st.text_input("Наименование клиента (быстрый текстовый поиск):", placeholder="Например: Авиа, Техно")
-    # Добавляем интерактивный выпадающий список для точечного выбора клиентов
-    selected_dropdown_clients = st.multiselect("🎯 Выбрать определенных клиентов из списка:", options=list_all_clients)
+    client_input = st.text_input("Наименование клиента (быстрый текстовый поиск):", placeholder="Например: Авиа, Техно, Рольф")
 
 with col_date:
     today_dt = datetime.date.today()
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
-    # Добавляем интерактивный выпадающий список для выбора статусов
+    # Чистый, защищенный выпадающий список статусов
     selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
 
 # Разбираем границы выбранного периода
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range[0], date_range[1]
+    start_filter, end_filter = date_range, date_range
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range[0], today_dt
+    start_filter, end_filter = date_range, today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -106,7 +112,7 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         
     df_all = pd.concat(frames, ignore_index=True)
     
-    # Фильтр по Дате счета с защитой от ошибок типов
+    # Фильтр по Дате счета
     if 'Дата счета' in df_all.columns:
         s_date = pd.to_datetime(start_filter).date()
         e_date = pd.to_datetime(end_filter).date()
@@ -116,26 +122,22 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-    # А. Фильтр по Клиенту (Текстовое поле ввода)
+    # Фильтр по Клиенту (Текстовое поле ввода)
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
-
-    # Б. Фильтр по Выпадающему списку клиентов (Мультиселект)
-    if filter_by_client and selected_dropdown_clients and 'Клиент' in df_all.columns:
-        df_all = df_all[df_all['Клиент'].astype(str).str.strip().isin(selected_dropdown_clients)]
             
-    # В. Фильтр по Статусу (Системные кнопки отчетов)
+    # Фильтр по Статусу (Системные кнопки отчетов)
     if allowed_statuses and 'Статус' in df_all.columns:
         df_all['🤖 Системный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
         status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
         df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
         df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
 
-    # Г. Фильтр по Выпадающему списку статусов (Мультиселект параметров поиска)
+    # Фильтр по Выпадающему списку статусов (Мультиселект параметров поиска)
     if selected_dropdown_statuses and 'Статус' in df_all.columns:
         df_all = df_all[df_all['Статус'].astype(str).str.strip().isin(selected_dropdown_statuses)]
             
@@ -147,7 +149,7 @@ st.subheader("📋 Формирование отчетов")
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    if st.button("🔵🔍 Поиск по Клиенту"):
+    if st.button("🔵 Поиск по Клиенту"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
         st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True, allowed_statuses=None)
         st.session_state.report_name = "Поиск_по_Клиенту"
@@ -155,25 +157,22 @@ with c1:
 with c2:
     if st.button("📑 Разрешения"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        # Листы КЗ и РБ разр (без Алм). Фильтр клиентов ВКЛЮЧЕН
         st.session_state.current_report = build_report(["КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["На разрешении", "Получено разрешение"])
         st.session_state.report_name = "Разрешения"
 
 with c3:
     if st.button("🚚 Отгружено"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        # Листы Вну, Бри-Дро, КЗ, РБ (без Алм)
         st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["В пути"])
         st.session_state.report_name = "Отгружено"
 
 with c4:
     if st.button("🏢 Прибытие"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        # Только лист Алм
         st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы"])
         st.session_state.report_name = "Прибытие"
 
-# --- 8. ВЫВОД РЕЗУЛЬТАТОВ И СКАЧИВАНИЕ EXCEL ---
+# --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
@@ -181,8 +180,14 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True)
+        # Для того чтобы любые ячейки, номера счетов и строк можно было свободно выделять мышкой
+        # и копировать без перезагрузки кэша, мы переключаем отображение на st.data_editor
+        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
         
         c5, c6 = st.columns(2)
         with c5:
             output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
+            processed_data = output.getvalue()
+            st.download_button(
