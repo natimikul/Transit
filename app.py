@@ -85,13 +85,13 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-    if filter_by_client and client_input and 'Клиент' in df_all.columns:
+       if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
-            
+              
     final_cols = [c for c in required_columns if c in df_all.columns]
     if not df_all.empty:
         return df_all[final_cols]
