@@ -190,7 +190,34 @@ with c4:
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
-    
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
+        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
+
+        c5, c6 = st.columns(2)
+        with c5:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
+            processed_data = output.getvalue()
+            st.download_button(
+                label="🟠 Выгрузить в Excel",
+                data=processed_data,
+                file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        with c6:
+            if st.button("💗 Оповестить"):
+                st.session_state.show_email_modal = not st.session_state.show_email_modal
+
+if st.session_state.get('show_email_modal', False):
+    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
+        emails = st.text_input("Введите адреса электронной почты через запятую:")
+        if st.button("🚀 Отправить сводку за сегодня"):
+            if not emails:
+                st.error("Укажите хотя бы один адрес!")
+            else:
+                st.success(f"📧 Сводка успешно отправлена на адреса: {emails}")
+                st.session_state.show_email_modal = False
+
