@@ -7,7 +7,7 @@ from io import BytesIO
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
-# Увеличиваем размер эмодзи-значков на кнопках через CSS стили
+# Исправлено: корректный параметр unsafe_allow_html для увеличения эмодзи на кнопках
 st.markdown("""
 <style>
     div.stButton > button p {
@@ -15,7 +15,7 @@ st.markdown("""
         font-weight: bold !important;
     }
 </style>
-""", unsafe_unsafe_html=True)
+""", unsafe_allow_html=True)
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
 CORRECT_PASSWORD = "Password123"
@@ -59,7 +59,7 @@ for name, url in sheet_urls.items():
         if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
             df = df.iloc[1:].reset_index(drop=True)
         
-        # Фильтруем статусы от мусора кода Google (убираем строки с формулами, скриптами, скобками и пустотой)
+        # Фильтруем статусы от технического мусора Google
         if 'Статус' in df.columns:
             for s_val in df['Статус'].dropna().astype(str).unique():
                 s_clean = s_val.strip()
@@ -88,7 +88,6 @@ with col_date:
     today_dt = datetime.date.today()
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
-    # Чистый, защищенный выпадающий список статусов
     selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
 
 # Разбираем границы выбранного периода
@@ -123,7 +122,7 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
     # Фильтр по Клиенту (Текстовое поле ввода)
-    if filter_by_client and client_input and 'Клиент' in df_all.columns:
+    if filter_by_client and client_input and 'Clarinet' not in df_all.columns and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
@@ -163,7 +162,7 @@ with c2:
 with c3:
     if st.button("🚚 Отгружено"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["В пути"])
+        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ раз r"], cols, filter_by_client=True, allowed_statuses=["В пути"])
         st.session_state.report_name = "Отгружено"
 
 with c4:
@@ -180,8 +179,7 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        # Для того чтобы любые ячейки, номера счетов и строк можно было свободно выделять мышкой
-        # и копировать без перезагрузки кэша, мы переключаем отображение на st.data_editor
+        # Интерактивный встроенный редактор для быстрого копирования через Ctrl+C без перезагрузок кэша
         st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
         
         c5, c6 = st.columns(2)
@@ -191,3 +189,6 @@ if st.session_state.current_report is not None:
                 st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
             processed_data = output.getvalue()
             st.download_button(
+                label="🟠 Выгрузить в Excel",
+                data=processed_data,
+                file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
