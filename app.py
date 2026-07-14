@@ -69,7 +69,9 @@ else:
     start_filter, end_filter = default_start_dt, today_dt
 
 # Выводим количество полученных строк для оперативной диагностики
-st.write("Количество полученных строк на листе 'Вну':", len(data_dict.get("Вну", [])))
+# Выводим суммарное количество строк со всех пяти листов для контроля
+total_rows = sum(len(df) for df in data_dict.values())
+st.write(f"📊 Всего загружено строк со всех 5 листов таблицы: {total_rows}")
 
 # --- 5. ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ОТЧЕТОВ ---
 def build_report(target_sheets, required_columns, filter_by_client=True):
