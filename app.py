@@ -7,7 +7,6 @@ from io import BytesIO
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
-# Исправлено: корректный параметр unsafe_allow_html для увеличения эмодзи на кнопках
 st.markdown("""
 <style>
     div.stButton > button p {
@@ -59,7 +58,6 @@ for name, url in sheet_urls.items():
         if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
             df = df.iloc[1:].reset_index(drop=True)
         
-        # Фильтруем статусы от технического мусора Google
         if 'Статус' in df.columns:
             for s_val in df['Статус'].dropna().astype(str).unique():
                 s_clean = s_val.strip()
@@ -90,7 +88,6 @@ with col_date:
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
     selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
 
-# Разбираем границы выбранного периода
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_filter, end_filter = date_range, date_range
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
@@ -111,7 +108,6 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         
     df_all = pd.concat(frames, ignore_index=True)
     
-    # Фильтр по Дате счета
     if 'Дата счета' in df_all.columns:
         s_date = pd.to_datetime(start_filter).date()
         e_date = pd.to_datetime(end_filter).date()
@@ -121,22 +117,19 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-    # Фильтр по Клиенту (Текстовое поле ввода)
-    if filter_by_client and client_input and 'Clarinet' not in df_all.columns and 'Клиент' in df_all.columns:
+    if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
             
-    # Фильтр по Статусу (Системные кнопки отчетов)
-    if allowed_statuses and 'Статус' in df_all.columns:
+    if allowed_statuses and 'Status' not in df_all.columns and 'Статус' in df_all.columns:
         df_all['🤖 Системный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
         status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
         df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
         df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
 
-    # Фильтр по Выпадающему списку статусов (Мультиселект параметров поиска)
     if selected_dropdown_statuses and 'Статус' in df_all.columns:
         df_all = df_all[df_all['Статус'].astype(str).str.strip().isin(selected_dropdown_statuses)]
             
@@ -162,7 +155,7 @@ with c2:
 with c3:
     if st.button("🚚 Отгружено"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ раз r"], cols, filter_by_client=True, allowed_statuses=["В пути"])
+        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["В пути"])
         st.session_state.report_name = "Отгружено"
 
 with c4:
@@ -179,7 +172,6 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        # Интерактивный встроенный редактор для быстрого копирования через Ctrl+C без перезагрузок кэша
         st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
         
         c5, c6 = st.columns(2)
@@ -192,3 +184,12 @@ if st.session_state.current_report is not None:
                 label="🟠 Выгрузить в Excel",
                 data=processed_data,
                 file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        with c6:
+            if st.button("💗 Оповестить"):
+                st.session_state.show_email_modal = not st.session_state.show_email_modal
+
+if st.session_state.get('show_email_modal', False):
+    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
+        emails = st.text_input("Введите адреса электронной почты через запятую:")
