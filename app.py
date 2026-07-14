@@ -91,9 +91,9 @@ with col_date:
 
 # Безопасный разбор границ календаря
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range[0], date_range[1]
+    start_filter, end_filter = date_range, date_range
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range[0], today_dt
+    start_filter, end_filter = date_range, today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -156,12 +156,12 @@ with c1:
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
         st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=None)
-        st.session_name = "Поиск_по_Клиенту"
+        st.session_state.report_name = "Поиск_по_Клиенту"
         st.rerun()
 
 with c2:
     if st.button("📑 Разрешения"):
-        # СТРОГО 2 ЛИСТА: КЗ разр, РБ разр
+        # Исправлено: строго 2 листа
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
         st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["На разрешении", "Получено разрешение"])
@@ -170,7 +170,7 @@ with c2:
 
 with c3:
     if st.button("🚚 Отгружено"):
-        # СТРОГО 4 ЛИСТА: Вну, Бри-Дро, КЗ разр, РБ разр (без Алм)
+        # Исправлено: строго 4 листа (без Алм)
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
         st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["В пути"])
@@ -179,7 +179,7 @@ with c3:
 
 with c4:
     if st.button("🏢 Прибытие"):
-        # СТРОГО 1 ЛИСТ: Алм
+        # Исправлено: строго 1 лист (Алм)
         st.session_state.active_sheets = ["Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
         st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы"])
