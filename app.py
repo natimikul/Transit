@@ -10,12 +10,12 @@ st.title("📦 Система мониторинга статуса отгруз
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
     spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
-    base_url = f"https://google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
+    base_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
 
     all_dfs = {}
     for s in sheets:
         try:
-            df = pd.read_csv("{base_url}{s}", encoding='utf-8-sig')
+            df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig')
             
             # Принудительно сопоставляем имена колонок, убирая любые скрытые символы
             df.columns = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
