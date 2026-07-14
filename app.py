@@ -35,11 +35,11 @@ if not st.session_state.authenticated:
 
 # --- 2. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
 sheet_urls = {
-    "Вну": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=0&single=true&output=csv",
-    "Бри-Дро": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1228744427&single=true&output=csv",
-    "КЗ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1220441722&single=true&output=csv",
-    "РБ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=104608385&single=true&output=csv",
-    "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
+    "Вну": "https://google.com",
+    "Бри-Дро": "https://google.com",
+    "КЗ разр": "https://google.com",
+    "РБ разр": "https://google.com",
+    "Алм": "https://google.com"
 }
 
 # --- 3. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ ---
@@ -74,6 +74,7 @@ list_all_statuses = sorted(list(unique_statuses_from_db))
 if 'current_report' not in st.session_state: st.session_state.current_report = None
 if 'report_name' not in st.session_state: st.session_state.report_name = ""
 if 'show_email_modal' not in st.session_state: st.session_state.show_email_modal = False
+if 'active_sheets' not in st.session_state: st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
 
 # --- 5. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
 st.subheader("🔍 Параметры поиска")
@@ -88,15 +89,18 @@ with col_date:
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
     selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
 
+# Безопасный разбор границ календаря
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range, date_range
+    start_filter, end_filter = date_range[0], date_range[1]
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range, today_dt
+    start_filter, end_filter = date_range[0], today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
-total_rows = sum(len(df) for df in data_dict.values())
-st.write(f"📊 Всего загружено строк со всех 5 листов таблицы: {total_rows}")
+# Считаем строки ТОЛЬКО на тех листах, которые выбраны текущим отчетом
+total_rows = sum(len(data_dict[s]) for s in st.session_state.active_sheets if s in data_dict)
+sheets_text = ", ".join(st.session_state.active_sheets)
+st.write(f"📊 Обработано строк: {total_rows} (листы: {sheets_text})")
 
 # --- 6. УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ---
 def build_report(target_sheets, required_columns, filter_by_client=True, allowed_statuses=None):
@@ -108,15 +112,20 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         
     df_all = pd.concat(frames, ignore_index=True)
     
+    # Фильтр по Дате счета
     if 'Дата счета' in df_all.columns:
-        s_date = pd.to_datetime(start_filter).date()
-        e_date = pd.to_datetime(end_filter).date()
-        delta_days = (e_date - s_date).days
-        allowed_text_dates = [(s_date + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta_days + 1)]
-        allowed_text_dates += [(s_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta_days + 1)]
-        df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
-        df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
+        try:
+            s_date = pd.to_datetime(start_filter).date()
+            e_date = pd.to_datetime(end_filter).date()
+            delta_days = (e_date - s_date).days
+            allowed_text_dates = [(s_date + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta_days + 1)]
+            allowed_text_dates += [(s_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta_days + 1)]
+            df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
+            df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
+        except Exception:
+            pass
         
+    # Фильтр по Наименованию Клиента
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
@@ -124,12 +133,14 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
             
-    if allowed_statuses and 'Status' not in df_all.columns and 'Статус' in df_all.columns:
+    # Фильтр по Статусу (Системные кнопки отчетов)
+    if allowed_statuses and 'Статус' in df_all.columns:
         df_all['🤖 Системный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
         status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
         df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
         df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
 
+    # Фильтр по Выпадающему списку статусов
     if selected_dropdown_statuses and 'Статус' in df_all.columns:
         df_all = df_all[df_all['Статус'].astype(str).str.strip().isin(selected_dropdown_statuses)]
             
@@ -142,27 +153,38 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     if st.button("🔵 Поиск по Клиенту"):
+        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True, allowed_statuses=None)
-        st.session_state.report_name = "Поиск_по_Клиенту"
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=None)
+        st.session_name = "Поиск_по_Клиенту"
+        st.rerun()
 
 with c2:
     if st.button("📑 Разрешения"):
+        # СТРОГО 2 ЛИСТА: КЗ разр, РБ разр
+        st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["На разрешении", "Получено разрешение"])
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["На разрешении", "Получено разрешение"])
         st.session_state.report_name = "Разрешения"
+        st.rerun()
 
 with c3:
     if st.button("🚚 Отгружено"):
+        # СТРОГО 4 ЛИСТА: Вну, Бри-Дро, КЗ разр, РБ разр (без Алм)
+        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["В пути"])
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["В пути"])
         st.session_state.report_name = "Отгружено"
+        st.rerun()
 
 with c4:
     if st.button("🏢 Прибытие"):
+        # СТРОГО 1 ЛИСТ: Алм
+        st.session_state.active_sheets = ["Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы"])
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы"])
         st.session_state.report_name = "Прибытие"
+        st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
 if st.session_state.current_report is not None:
@@ -172,24 +194,3 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
-        
-        c5, c6 = st.columns(2)
-        with c5:
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
-            processed_data = output.getvalue()
-            st.download_button(
-                label="🟠 Выгрузить в Excel",
-                data=processed_data,
-                file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        with c6:
-            if st.button("💗 Оповестить"):
-                st.session_state.show_email_modal = not st.session_state.show_email_modal
-
-if st.session_state.get('show_email_modal', False):
-    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
-        emails = st.text_input("Введите адреса электронной почты через запятую:")
