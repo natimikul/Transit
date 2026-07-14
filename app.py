@@ -15,23 +15,35 @@ def load_all_sheets():
     all_dfs = {}
     for s in sheets:
         try:
-            df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig')
-            
-            # Принудительно сопоставляем имена колонок, убирая любые скрытые символы
-            df.columns = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
-                          'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
-                          'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
-                          'Прибыл (факт)', 'Статус'] + list(df.columns[14:])
-                          
-            all_dfs[s] = df
+                   # Читаем без заголовков, чтобы увидеть реальную структуру
+         df = pd.read_csv(f"{base_url}{s}", encoding='utf-8-sig', header=None)
+
+         # Удаляем полностью пустые строки, если они есть вверху таблицы
+         df = df.dropna(how='all').reset_index(drop=True)
+
+         # Назначаем правильные имена колонок вручную для первых 14 столбцов
+         col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
+                      'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
+                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
+                      'Прибыл (факт)', 'Статус']
+
+         # Если строк хватает, берем имена и сопоставляем
+         df.columns = col_names + list(range(len(df.columns) - len(col_names)))
+
+         # Если первая строка — это текстовый заголовок, убираем её из данных
+         if not df.empty and ('заявк' in str(df.iloc[0, 0]) or 'счет' in str(df.iloc[0, 1])):
+             df = df.iloc[1:].reset_index(drop=True)
+
+         all_dfs[s] = df
+
         except Exception:
             all_dfs[s] = pd.DataFrame()
     return all_dfs
 
 data_dict = load_all_sheets()
-st.write("Проверка связи с Google Таблицей. Доступные листы:", list(data_dict.keys()))
-if "Вну" in data_dict and not data_dict["Вну"].empty:
-    st.write("Первые 3 строчки листа 'Вну':", data_dict["Вну"].head(3))
+st.write("Количество полученных строк на листе 'Вну':", len(data_dict.get("Вну", [])))
+if "Вну" in data_dict and len(data_dict["Вну"]) > 0:
+    st.write("Пример первой строки данных:", data_dict["Вну"].iloc[0].to_dict())
 
 if 'current_report' not in st.session_state:
     st.session_state.current_report = None
