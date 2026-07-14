@@ -9,8 +9,8 @@ st.title("📦 Система мониторинга статуса отгруз
 @st.cache_data(ttl=30)
 def load_all_sheets():
     sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-    spreadsheet_id = "1F_EfNPXxhIHaRLUx_ebADRfpNEY1SztmeBrc86KuysI"
-    base_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/pub?output=csv&sheet="
+    spreadsheet_id = "2PACX-1vQy_3jRua5liYZD1tk7nCWlSLhn_lbFjIucGcO-hxR3Z3DNvpgr32WYwurNJZ-InELLpicod-6wGIAD"
+    base_url = f"https://docs.google.com/spreadsheets/d/e/{spreadsheet_id}/pub?output=csv&sheet="
 
     all_dfs = {}
     for s in sheets:
