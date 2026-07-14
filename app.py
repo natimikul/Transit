@@ -8,24 +8,19 @@ st.title("📦 Система мониторинга статуса отгруз
 
 @st.cache_data(ttl=30)
 def load_all_sheets():
-    # Каждому текстовому имени листа сопоставляем его системный gid при веб-публикации
-    # Если gid ваших листов отличаются, сайт скачает только первый (главный) лист
-    sheet_gids = {
-        "Вну": "0", 
-        "Бри-Дро": "1228744427", 
-        "КЗ разр": "1", 
-        "РБ разр": "2", 
-        "Алм": "3"
+       # Замените текст в кавычках на ваши реальные ссылки из Google Таблицы
+    sheet_urls = {
+        "Вну": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=0&single=true&output=csv",
+        "Бри-Дро": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1228744427&single=true&output=csv",
+        "КЗ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1220441722&single=true&output=csv",
+        "РБ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=104608385&single=true&output=csv",
+        "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
     }
     
-    spreadsheet_id = "2PACX-1vQy_3jRua5liYZD1tk7nCWlSLhn_lbFjIucGcO-hxR3Z3DNvpgr32WYwurNJZ-InELLpicod-6wGIAD"
-    all_dfs = {}
-    
-    for s, gid in sheet_gids.items():
-        # Формируем прямую ссылку на конкретный опубликованный CSV-лист по его GID
-        pub_url = f"https://google.com{spreadsheet_id}/pub?output=csv&gid={gid}"
+       all_dfs = {}
+    for s, url in sheet_urls.items():
         try:
-            df = pd.read_csv(pub_url, encoding='utf-8-sig', header=None)
+            df = pd.read_csv(url, encoding='utf-8-sig', header=None)
             df = df.dropna(how='all').reset_index(drop=True)
             
             col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
@@ -35,7 +30,7 @@ def load_all_sheets():
             
             df.columns = col_names + list(range(len(df.columns) - len(col_names)))
             
-            if not df.empty and ('заявк' in str(df.iloc[0]).lower() or 'счет' in str(df.iloc[0]).lower()):
+            if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
                 df = df.iloc[1:].reset_index(drop=True)
                 
             all_dfs[s] = df
@@ -43,7 +38,7 @@ def load_all_sheets():
             all_dfs[s] = pd.DataFrame()
             
     return all_dfs
-
+   
 data_dict = load_all_sheets()
 
 if 'current_report' not in st.session_state:
