@@ -35,6 +35,9 @@ sheet_urls = {
 
 # --- 3. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ ---
 data_dict = {}
+unique_clients_from_db = set()
+unique_statuses_from_db = set()
+
 for name, url in sheet_urls.items():
     try:
         df = pd.read_csv(url, encoding='utf-8-sig', header=None)
@@ -46,9 +49,20 @@ for name, url in sheet_urls.items():
         df.columns = col_names + list(range(len(df.columns) - len(col_names)))
         if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
             df = df.iloc[1:].reset_index(drop=True)
+        
+        # Собираем уникальные значения для будущих выпадающих списков
+        if 'Клиент' in df.columns:
+            unique_clients_from_db.update(df['Клиент'].dropna().astype(str).str.strip().unique())
+        if 'Статус' in df.columns:
+            unique_statuses_from_db.update(df['Статус'].dropna().astype(str).str.strip().unique())
+            
         data_dict[name] = df
     except Exception:
         data_dict[name] = pd.DataFrame()
+
+# Превращаем во множества списков для мультиселектов
+list_all_clients = sorted(list(unique_clients_from_db))
+list_all_statuses = sorted(list(unique_statuses_from_db))
 
 # --- 4. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
 if 'current_report' not in st.session_state: st.session_state.current_report = None
@@ -60,17 +74,22 @@ st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
 
 with col_client:
-    client_input = st.text_input("Наименование клиента (можно несколько через запятую):", placeholder="Например: Авиа, Техно, Рольф")
+    client_input = st.text_input("Наименование клиента (быстрый текстовый поиск):", placeholder="Например: Авиа, Техно")
+    # Добавляем интерактивный выпадающий список для точечного выбора клиентов
+    selected_dropdown_clients = st.multiselect("🎯 Выбрать определенных клиентов из списка:", options=list_all_clients)
 
 with col_date:
     today_dt = datetime.date.today()
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
+    # Добавляем интерактивный выпадающий список для выбора статусов
+    selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
 
+# Разбираем границы выбранного периода
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range, date_range
+    start_filter, end_filter = date_range[0], date_range[1]
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range, today_dt
+    start_filter, end_filter = date_range[0], today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -87,28 +106,38 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         
     df_all = pd.concat(frames, ignore_index=True)
     
-    # Фильтр по Дате счета
+    # Фильтр по Дате счета с защитой от ошибок типов
     if 'Дата счета' in df_all.columns:
-        delta = end_filter - start_filter
-        allowed_text_dates = [(start_filter + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta.days + 1)]
-        allowed_text_dates += [(start_filter + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
+        s_date = pd.to_datetime(start_filter).date()
+        e_date = pd.to_datetime(end_filter).date()
+        delta_days = (e_date - s_date).days
+        allowed_text_dates = [(s_date + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta_days + 1)]
+        allowed_text_dates += [(s_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta_days + 1)]
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-    # Фильтр по Клиенту
+    # А. Фильтр по Клиенту (Текстовое поле ввода)
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
+
+    # Б. Фильтр по Выпадающему списку клиентов (Мультиселект)
+    if filter_by_client and selected_dropdown_clients and 'Клиент' in df_all.columns:
+        df_all = df_all[df_all['Клиент'].astype(str).str.strip().isin(selected_dropdown_clients)]
             
-    # Фильтр по Статусу
+    # В. Фильтр по Статусу (Системные кнопки отчетов)
     if allowed_statuses and 'Статус' in df_all.columns:
-        df_all['🤖 Текстовый Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
+        df_all['🤖 Системный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
         status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
-        df_all = df_all[df_all['🤖 Текстовый Статус'].isin(status_list)]
-        df_all.drop(columns=['🤖 Текстовый Статус'], inplace=True)
+        df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
+        df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
+
+    # Г. Фильтр по Выпадающему списку статусов (Мультиселект параметров поиска)
+    if selected_dropdown_statuses and 'Статус' in df_all.columns:
+        df_all = df_all[df_all['Статус'].astype(str).str.strip().isin(selected_dropdown_statuses)]
             
     final_cols = [c for c in required_columns if c in df_all.columns]
     return df_all[final_cols] if not df_all.empty else pd.DataFrame()
@@ -124,68 +153,36 @@ with c1:
         st.session_state.report_name = "Поиск_по_Клиенту"
 
 with c2:
-    if st.button(" 📑 Разрешения"):
+    if st.button("📑 Разрешения"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
+        # Листы КЗ и РБ разр (без Алм). Фильтр клиентов ВКЛЮЧЕН
         st.session_state.current_report = build_report(["КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["На разрешении", "Получено разрешение"])
         st.session_state.report_name = "Разрешения"
 
 with c3:
     if st.button("🚚 Отгружено"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
+        # Листы Вну, Бри-Дро, КЗ, РБ (без Алм)
         st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр"], cols, filter_by_client=True, allowed_statuses=["В пути"])
         st.session_state.report_name = "Отгружено"
 
 with c4:
     if st.button("🏢 Прибытие"):
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
+        # Только лист Алм
         st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы"])
         st.session_state.report_name = "Прибытие"
 
-# --- 8. ИНТЕРАКТИВНЫЕ ФИЛЬТРЫ И ВЫВОД РЕЗУЛЬТАТОВ ---
+# --- 8. ВЫВОД РЕЗУЛЬТАТОВ И СКАЧИВАНИЕ EXCEL ---
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
     
     if st.session_state.current_report.empty:
-        st.info("По заданным параметрам записей не найдено.")
+        st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        # Интерактивные фильтры на самом экране
-        col_f1, col_f2 = st.columns(2)
-        df_display = st.session_state.current_report.copy()
-        
-        with col_f1:
-            all_clients = sorted(df_display['Клиент'].dropna().astype(str).unique())
-            selected_clients = st.multiselect("🎯 Отфильтровать полученных Клиентов на экране:", options=all_clients, default=all_clients)
-            
-        with col_f2:
-            all_statuses = sorted(df_display['Статус'].dropna().astype(str).unique())
-            selected_statuses = st.multiselect("📊 Отфильтровать полученные Статусы на экране:", options=all_statuses, default=all_statuses)
-            
-        # Применяем наэкранные фильтры к итоговой таблице
-        df_display = df_display[df_display['Клиент'].astype(str).isin(selected_clients)]
-        df_display = df_display[df_display['Статус'].astype(str).isin(selected_statuses)]
-        
-        st.dataframe(df_display, hide_index=True, use_container_width=True)
+        st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True)
         
         c5, c6 = st.columns(2)
         with c5:
             output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_display.to_excel(writer, index=False, sheet_name='Отчет')
-            processed_data = output.getvalue()
-            st.download_button(
-                label="🟠 Выгрузить в Excel",
-                data=processed_data,
-                file_name=f"{st.session_state.report_name}_{today_dt}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        with c6:
-            if st.button("💗 Оповестить"):
-                st.session_state.show_email_modal = not st.session_state.show_email_modal
-
-if st.session_state.get('show_email_modal', False):
-    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
-        emails = st.text_input("Введите адреса электронной почты через запятую:")
-        if st.button("🚀 Отправить сводку за сегодня"):
-            if not emails:
-                st.error("Укажите хотя бы один адрес!")
