@@ -3,44 +3,44 @@ import pandas as pd
 import datetime
 from io import BytesIO
 
+# --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
-@st.cache_data(ttl=30)
-def load_all_sheets():
-       # Замените текст в кавычках на ваши реальные ссылки из Google Таблицы
-    sheet_urls = {
-        "Вну": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=0&single=true&output=csv",
-        "Бри-Дро": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1228744427&single=true&output=csv",
-        "КЗ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1220441722&single=true&output=csv",
-        "РБ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=104608385&single=true&output=csv",
-        "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
-    }
-    
-       all_dfs = {}
-    for s, url in sheet_urls.items():
-        try:
-            df = pd.read_csv(url, encoding='utf-8-sig', header=None)
-            df = df.dropna(how='all').reset_index(drop=True)
-            
-            col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
-                         'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
-                         'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
-                         'Прибыл (факт)', 'Статус']
-            
-            df.columns = col_names + list(range(len(df.columns) - len(col_names)))
-            
-            if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
-                df = df.iloc[1:].reset_index(drop=True)
-                
-            all_dfs[s] = df
-        except Exception:
-            all_dfs[s] = pd.DataFrame()
-            
-    return all_dfs
-   
-data_dict = load_all_sheets()
+# --- 1. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
+sheet_urls = {
+    "Вну": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=0&single=true&output=csv",
+    "Бри-Дро": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1228744427&single=true&output=csv",
+    "КЗ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1220441722&single=true&output=csv",
+    "РБ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=104608385&single=true&output=csv",
+    "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
+}
 
+# --- 2. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ БЕЗ ВЛОЖЕННЫХ ФУНКЦИЙ ---
+data_dict = {}
+for name, url in sheet_urls.items():
+    try:
+        # Скачиваем CSV-лист напрямую
+        df = pd.read_csv(url, encoding='utf-8-sig', header=None)
+        df = df.dropna(how='all').reset_index(drop=True)
+        
+        # Задаем жесткий порядок заголовков колонок
+        col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
+                     'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
+                     'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
+                     'Прибыл (факт)', 'Статус']
+        
+        df.columns = col_names + list(range(len(df.columns) - len(col_names)))
+        
+        # Срезаем текстовую строку шапки, если она попала в данные
+        if not df.empty and ('заявк' in str(df.iloc[0]).lower() or 'счет' in str(df.iloc[0]).lower()):
+            df = df.iloc[1:].reset_index(drop=True)
+            
+        data_dict[name] = df
+    except Exception:
+        data_dict[name] = pd.DataFrame()
+
+# --- 3. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
 if 'current_report' not in st.session_state:
     st.session_state.current_report = None
 if 'report_name' not in st.session_state:
@@ -48,6 +48,7 @@ if 'report_name' not in st.session_state:
 if 'show_email_modal' not in st.session_state:
     st.session_state.show_email_modal = False
 
+# --- 4. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
 st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
 
@@ -59,16 +60,18 @@ with col_date:
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
 
+# Разбираем границы выбранного периода
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range, date_range
+    start_filter, end_filter = date_range[0], date_range[1]
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range, today_dt
+    start_filter, end_filter = date_range[0], today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
 # Выводим количество полученных строк для оперативной диагностики
 st.write("Количество полученных строк на листе 'Вну':", len(data_dict.get("Вну", [])))
 
+# --- 5. ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ОТЧЕТОВ ---
 def build_report(target_sheets, required_columns, filter_by_client=True):
     frames = []
     for s in target_sheets:
@@ -76,8 +79,10 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
             frames.append(data_dict[s].copy())
     if not frames:
         return pd.DataFrame()
+        
     df_all = pd.concat(frames, ignore_index=True)
     
+    # Текстовый фильтр временного диапазона дат счета
     if 'Дата счета' in df_all.columns:
         delta = end_filter - start_filter
         allowed_text_dates = [(start_filter + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta.days + 1)]
@@ -85,18 +90,20 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
         df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
         df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
         
-       if filter_by_client and client_input and 'Клиент' in df_all.columns:
+    # Всеядный поиск по клиенту с вычищением знаков препинания, точек и пробелов
+    if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
         if search_words:
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
-              
+            
     final_cols = [c for c in required_columns if c in df_all.columns]
     if not df_all.empty:
         return df_all[final_cols]
     return pd.DataFrame()
 
+# --- 6. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 c1, c2, c3, c4 = st.columns(4)
 
@@ -124,6 +131,7 @@ with c4:
         st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True)
         st.session_state.report_name = "Прибытие"
 
+# --- 7. ВЫВОД РЕЗУЛЬТАТОВ И СКАЧИВАНИЕ EXCEL ---
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
