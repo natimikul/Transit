@@ -7,7 +7,6 @@ from io import BytesIO
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
-# Стилизация кнопок и блокировка сервисных горячих клавиш Streamlit для свободного Ctrl+C
 st.markdown("""
 <style>
     div.stButton > button p {
@@ -15,17 +14,6 @@ st.markdown("""
         font-weight: bold !important;
     }
 </style>
-<script>
-    // Блокируем перехват клавиши C платформой Streamlit, чтобы окно Clear Caches не мешало копированию
-    window.addEventListener('keydown', function(e) {
-        if ((e.key === 'c' || e.key === 'C' || e.keyCode === 67) && !e.ctrlKey && !e.metaKey) {
-            // Позволяем стандартное поведение букве С только внутри полей ввода
-            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
-                e.stopImmediatePropagation();
-            }
-        }
-    }, true);
-</script>
 """, unsafe_allow_html=True)
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
@@ -206,44 +194,13 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-             # Превращаем таблицу в чистый HTML-текст для свободного выделения и копирования без вызова окон кэша
-     html_table = st.session_state.current_report.to_html(index=False, classes='table table-striped', justify='left')
-
-     # Добавляем стили для красоты (границы, шрифты и отступы)
-     st.markdown(f"""
-     <style>
-         .rendered_html table {{
-             width: 100% !important;
-             border-collapse: collapse !important;
-             font-size: 16px !important;
-             font-family: sans-serif !important;
-         }}
-         .rendered_html th {{
-             background-color: #f0f2f6 !important;
-             color: #31333f !important;
-             padding: 10px !important;
-             border: 1px solid #dee2e6 !important;
-             font-weight: bold !important;
-         }}
-         .rendered_html td {{
-             padding: 10px !important;
-             border: 1px solid #dee2e6 !important;
-             color: #31333f !important;
-         }}
-         .rendered_html tr:nth-child(even) {{
-             background-color: #f8f9fa !important;
-         }}
-     </style>
-     <div class="rendered_html">
-         {html_table}
-     </div>
-     """, unsafe_allow_html=True)
+        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
 
         c5, c6 = st.columns(2)
         with c5:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                st.df_display.to_excel(writer, index=False, sheet_name='Отчет')
+                st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
             processed_data = output.getvalue()
             st.download_button(
                 label="🟠 Выгрузить в Excel",
@@ -264,4 +221,3 @@ if st.session_state.get('show_email_modal', False):
             else:
                 st.success(f"📧 Сводка успешно отправлена на адреса: {emails}")
                 st.session_state.show_email_modal = False
-
