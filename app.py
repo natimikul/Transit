@@ -194,7 +194,7 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
+        st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True, selection_mode="multiple")
 
         c5, c6 = st.columns(2)
         with c5:
