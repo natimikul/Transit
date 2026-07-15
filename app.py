@@ -206,7 +206,38 @@ if st.session_state.current_report is not None:
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True, selection_mode="multiple")
+             # Превращаем таблицу в чистый HTML-текст для свободного выделения и копирования без вызова окон кэша
+     html_table = st.session_state.current_report.to_html(index=False, classes='table table-striped', justify='left')
+
+     # Добавляем стили для красоты (границы, шрифты и отступы)
+     st.markdown(f"""
+     <style>
+         .rendered_html table {{
+             width: 100% !important;
+             border-collapse: collapse !important;
+             font-size: 16px !important;
+             font-family: sans-serif !important;
+         }}
+         .rendered_html th {{
+             background-color: #f0f2f6 !important;
+             color: #31333f !important;
+             padding: 10px !important;
+             border: 1px solid #dee2e6 !important;
+             font-weight: bold !important;
+         }}
+         .rendered_html td {{
+             padding: 10px !important;
+             border: 1px solid #dee2e6 !important;
+             color: #31333f !important;
+         }}
+         .rendered_html tr:nth-child(even) {{
+             background-color: #f8f9fa !important;
+         }}
+     </style>
+     <div class="rendered_html">
+         {html_table}
+     </div>
+     """, unsafe_allow_html=True)
 
         c5, c6 = st.columns(2)
         with c5:
