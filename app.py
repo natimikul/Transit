@@ -57,18 +57,19 @@ for name, url in sheet_urls.items():
         df.columns = col_names + list(range(len(df.columns) - len(col_names)))
         if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
             df = df.iloc[1:].reset_index(drop=True)
-        
-        if 'Статус' in df.columns:
-            for s_val in df['Статус'].dropna().astype(str).unique():
-                s_clean = s_val.strip()
-                if s_clean and not any(char in s_clean for char in ['{', '}', '(', ')', ';', '=', ':']):
-                    unique_statuses_from_db.add(s_clean)
-                    
+                         
         data_dict[name] = df
     except Exception:
         data_dict[name] = pd.DataFrame()
-
-list_all_statuses = sorted(list(unique_statuses_from_db))
+list_all_statuses = [
+    "Создан",
+    "В сборке",
+    "В сборке, ожидает разрешения",
+    "В пути",
+    "Задержка поставки",
+    "Прибыл на склад Алматы",
+    "Готов к отгрузке клиенту"
+]
 
 # --- 4. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
 if 'current_report' not in st.session_state: st.session_state.current_report = None
