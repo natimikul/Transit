@@ -243,7 +243,7 @@ if st.session_state.current_report is not None:
         with c5:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                st.session_state.current_report.to_excel(writer, index=False, sheet_name='Отчет')
+                st.df_display.to_excel(writer, index=False, sheet_name='Отчет')
             processed_data = output.getvalue()
             st.download_button(
                 label="🟠 Выгрузить в Excel",
