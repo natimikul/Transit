@@ -7,6 +7,7 @@ from io import BytesIO
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса отгрузки счетов")
 
+# Стилизация кнопок и блокировка сервисных горячих клавиш Streamlit для свободного Ctrl+C
 st.markdown("""
 <style>
     div.stButton > button p {
@@ -14,6 +15,17 @@ st.markdown("""
         font-weight: bold !important;
     }
 </style>
+<script>
+    // Блокируем перехват клавиши C платформой Streamlit, чтобы окно Clear Caches не мешало копированию
+    window.addEventListener('keydown', function(e) {
+        if ((e.key === 'c' || e.key === 'C' || e.keyCode === 67) && !e.ctrlKey && !e.metaKey) {
+            // Позволяем стандартное поведение букве С только внутри полей ввода
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                e.stopImmediatePropagation();
+            }
+        }
+    }, true);
+</script>
 """, unsafe_allow_html=True)
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
