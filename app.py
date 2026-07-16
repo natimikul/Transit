@@ -165,7 +165,7 @@ with c2:
         # Исправлено: строго 2 листа
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В пути", "В сборке, ожидает разрешения"])
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"])
         st.session_state.report_name = "Разрешения"
         st.rerun()
 
