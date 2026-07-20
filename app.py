@@ -99,8 +99,8 @@ with col_date:
     today_dt = datetime.date.today()
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
-    selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", options=list_all_statuses)
-
+    selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
+  
 # Безопасный разбор границ календаря
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_filter, end_filter = date_range, date_range
@@ -168,6 +168,12 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
         df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
         df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
+    # Фильтр по Статусу из выпадающего списка на экране
+    if 'selected_dropdown_statuses' in st.session_state and st.session_state.selected_dropdown_statuses and 'Статус' in df_all.columns:
+        df_all['⚙️ Временный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
+        dropdown_list = [str(st_item).strip().lower() for st_item in st.session_state.selected_dropdown_statuses]
+        df_all = df_all[df_all['⚙️ Временный Статус'].isin(dropdown_list)]
+        df_all.drop(columns=['⚙️ Временный Статус'], inplace=True)
 
     # Фильтр по Выпадающему списку статусов
     if selected_dropdown_statuses and 'Статус' in df_all.columns:
