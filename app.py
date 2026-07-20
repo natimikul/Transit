@@ -62,8 +62,10 @@ for name, url in sheet_urls.items():
                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
                      'Прибыл (факт)', 'Статус']
         df.columns = col_names + list(range(len(df.columns) - len(col_names)))
-        if not df.empty and ('заявк' in str(df.iloc).lower() or 'счет' in str(df.iloc).lower()):
-            df = df.iloc[1:].reset_index(drop=True)
+        if not df.empty and len(df) > 0:
+            first_row_str = str(df.iloc[0].values).lower()
+            if 'заявк' in first_row_str or 'счет' in first_row_str:
+                df = df.iloc[1:].reset_index(drop=True)
                          
         data_dict[name] = df
     except Exception:
@@ -125,7 +127,13 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
     df_all = pd.concat(frames, ignore_index=True)
     
     # Фильтр по Дате счета
-    if 'Дата счета' in df_all.columns and not invoice_text:
+    # Проверяем, действительно ли поле номера счета пустое (убираем пробелы)
+    is_invoice_empty = True
+    if invoice_text and str(invoice_text).strip():
+        is_invoice_empty = False
+
+    if 'Дата счета' in df_all.columns and is_invoice_empty:
+
         try:
             s_date = pd.to_datetime(start_filter).date()
             e_date = pd.to_datetime(end_filter).date()
