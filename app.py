@@ -125,7 +125,7 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
     df_all = pd.concat(frames, ignore_index=True)
     
     # Фильтр по Дате счета
-   if 'Дата счета' in df_all.columns and not invoice_text:
+    if 'Дата счета' in df_all.columns and not invoice_text:
         try:
             s_date = pd.to_datetime(start_filter).date()
             e_date = pd.to_datetime(end_filter).date()
