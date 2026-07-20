@@ -134,14 +134,13 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
 
     if 'Дата счета' in df_all.columns and is_invoice_empty:
 
-            # Принудительно переводим колонку в формат даты, игнорируя ошибки
+        # Принудительно переводим колонку в формат даты, игнорируя ошибки
         df_all['⚙️ Временная Дата'] = pd.to_datetime(df_all['Дата счета'], format='%d.%m.%Y', errors='coerce')
         mask_iso = df_all['⚙️ Временная Дата'].isna()
         df_all.loc[mask_iso, '⚙️ Временная Дата'] = pd.to_datetime(df_all.loc[mask_iso, 'Дата счета'], format='%Y-%m-%d', errors='coerce')
         
-        # Фильтруем по диапазону дат из переменных start_filter и end_filter
-                # Фильтруем по переданным датам
-        if start_dt and end_dt:
+        # Безопасно фильтруем по переданным датам, ТОЛЬКО если они физически существуют
+        if start_dt is not None and end_dt is not None and not pd.isna(start_dt) and not pd.isna(end_dt):
             start_ts = pd.Timestamp(start_dt)
             end_ts = pd.Timestamp(end_dt)
             
