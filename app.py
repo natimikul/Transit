@@ -91,6 +91,9 @@ col_client, col_date = st.columns(2)
 with col_client:
     client_input = st.text_input("Фильтр по Клиенту (можно через запятую):", "")
     invoice_input = st.text_input("Фильтр по Номеру счета (можно через запятую):", "")
+    # Если пользователь начал писать в любое из полей, сбрасываем старый кнопочный отчет
+    if client_input or invoice_input:
+        st.session_state.current_report = None
 
 with col_date:
     today_dt = datetime.date.today()
@@ -306,6 +309,20 @@ with c4:
         st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
+# Если отчет еще не сформирован кнопками, собираем его автоматически по фильтрам из полей ввода
+if st.session_state.current_report is None:
+    # Определяем колонки по умолчанию (как для поиска по клиенту)
+    default_cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыль (факт)', 'Статус']
+    st.session_state.current_report = build_report(
+        target_sheets=st.session_state.active_sheets,
+        required_columns=default_cols,
+        filter_by_client=True,
+        allowed_statuses=None,
+        filter_by_invoice=True,
+        invoice_text=счет_ввод
+    )
+    st.session_state.report_name = "Быстрый_поиск"
+
 if st.session_state.current_report is not None:
     st.write("---")
     st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
