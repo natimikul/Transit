@@ -211,9 +211,9 @@ def send_today_report_email(recipient_emails, target_sheets):
     
     # 1. Собираем строки с сегодняшней датой со всех выбранных листов
     for s in target_sheets:
-        if s in data_dict and not data_dict[s].empty:
+            if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
-        if s == "Алм": st.write("Содержимое колонки Расценен:", df_sheet['Расценен'].unique())
+            if s == "Алм": st.write("Содержимое колонки Расценен:", df_sheet['Расценен'].unique())
          
                 # Если это лист Алм, проверяем колонку 'Расценен'
             if s == "Алм" and 'Расценен' in df_sheet.columns:
