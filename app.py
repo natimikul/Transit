@@ -222,13 +222,17 @@ def send_today_report_email(recipient_emails, target_sheets):
 """
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-    # 5. Прикрепляем созданный Excel-файл
-    part = MIMEBase('application', 'octet-stream')
+      # 5. Прикрепляем созданный Excel-файл
+    filename = f"Svodka_tranzitnyh_schetov_{today_formatted}.xlsx"
+    
+    part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     part.set_payload(excel_data)
     encoders.encode_base64(part)
+    
     part.add_header(
         'Content-Disposition',
-        f'attachment; filename="Сводка_транзитных_счетов_{today_formatted}.xlsx"'
+        'attachment',
+        filename=filename
     )
     msg.attach(part)
 
