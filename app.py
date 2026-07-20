@@ -137,9 +137,8 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         except Exception:
             pass
 
-    # Улучшенный фильтр по Номеру счета
+    # Улучшенный и безопасный фильтр по Номеру счета
     if filter_by_invoice and invoice_text:
-        # Определяем, как именно называется колонка в этой таблице
         target_col = None
         if 'Номер счета' in df_all.columns:
             target_col = 'Номер счета'
@@ -147,12 +146,13 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
             target_col = '№ счета'
             
         if target_col:
+            # Очищаем пользовательский ввод
             search_invoices = [inv.strip().lower() for inv in invoice_text.split(',') if inv.strip()]
             if search_invoices:
-                # Фильтруем данные, игнорируя регистр и пробелы
-                df_all = df_all[df_all[target_col].astype(str).str.lower().str.strip().apply(
-                    lambda x: any(inv in x for inv in search_invoices)
-                )]
+                # Безопасно приводим всю колонку к нижнему регистру, заменяя NaN на пустую строку
+                clean_series = df_all[target_col].fillna("").astype(str).str.lower().str.strip()
+                # Фильтруем: оставляем строки, где хотя бы один номер из поиска совпал
+                df_all = df_all[clean_series.apply(lambda x: any(inv in x for inv in search_invoices))]
    
     # Фильтр по Наименованию Клиента
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
