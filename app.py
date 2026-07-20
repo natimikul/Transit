@@ -217,7 +217,7 @@ def send_today_report_email(recipient_emails, target_sheets):
 
     body = f"""Добрый день!
 
-Информируем Вас о статусе транзитных счетов на сегодня ({today_formatted}).
+Информируем Вас о смене статуса транзитных счетов на сегодня ({today_formatted}).
 Файл во вложении.
 """
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
