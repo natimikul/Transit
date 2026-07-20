@@ -103,11 +103,10 @@ with col_date:
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
     selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
   
-# Безопасный разбор границ календаря
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_filter, end_filter = date_range, date_range
+    start_filter, end_filter = date_range[0], date_range[1]
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
-    start_filter, end_filter = date_range, today_dt
+    start_filter, end_filter = date_range[0], today_dt
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
@@ -117,7 +116,8 @@ sheets_text = ", ".join(st.session_state.active_sheets)
 st.write(f"📊 Обработано строк: {total_rows} (листы: {sheets_text})")
 
 # --- 6. УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ---
-def build_report(target_sheets, required_columns, filter_by_client=True, allowed_statuses=None, filter_by_invoice=True, invoice_text=""):
+def build_report(target_sheets, required_columns, filter_by_client=True, allowed_statuses=None, filter_by_invoice=True, invoice_text="", client_text="", start_dt=None, end_dt=None):
+
     frames = []
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
@@ -140,20 +140,14 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         df_all.loc[mask_iso, '⚙️ Временная Дата'] = pd.to_datetime(df_all.loc[mask_iso, 'Дата счета'], format='%Y-%m-%d', errors='coerce')
         
         # Фильтруем по диапазону дат из переменных start_filter и end_filter
-                # Проверяем наличие переменных дат в globals или в сессии Streamlit
-        has_dates = ('start_filter' in globals() and 'end_filter' in globals()) or ('start_filter' in st.session_state and 'end_filter' in st.session_state)
-        
-        if has_dates:
-            # Берем значения оттуда, где они нашлись
-            s_filt = globals().get('start_filter') or st.session_state.get('start_filter')
-            e_filt = globals().get('end_filter') or st.session_state.get('end_filter')
+                # Фильтруем по переданным датам
+        if start_dt and end_dt:
+            start_ts = pd.Timestamp(start_dt)
+            end_ts = pd.Timestamp(end_dt)
             
-            start_ts = pd.Timestamp(s_filt)
-            end_ts = pd.Timestamp(e_filt)
-
             df_all = df_all[
-                 (df_all['⚙️ Временная Дата'] >= start_ts) & 
-                 (df_all['⚙️ Временная Дата'] <= end_ts)
+                (df_all['⚙️ Временная Дата'] >= start_ts) & 
+                (df_all['⚙️ Временная Дата'] <= end_ts)
             ]
         
         # Удаляем временную техническую колонку
@@ -349,6 +343,7 @@ if current_mode == "Поиск по Клиенту":
         st.session_state.active_sheets, cols_all, 
         filter_by_client=True, allowed_statuses=None, 
         filter_by_invoice=True, invoice_text=invoice_input
+        start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Поиск_по_Клиенту"
 
@@ -357,6 +352,7 @@ elif current_mode == "Разрешения":
         st.session_state.active_sheets, cols_no_finance, 
         filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], 
         filter_by_invoice=True, invoice_text=invoice_input
+        start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Разрешения"
 
@@ -365,6 +361,7 @@ elif current_mode == "Отгружено":
         st.session_state.active_sheets, cols_all, 
         filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
         filter_by_invoice=True, invoice_text=invoice_input
+        start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Отгружено"
 
@@ -375,6 +372,7 @@ elif current_mode == "Прибытие":
         allowed_statuses=None,  # <--- СТАВИМ None, ЧТОБЫ ПОКАЗАТЬ ВСЕ СТАТУСЫ ЛИСТА АЛМ
         filter_by_invoice=True, 
         invoice_text=invoice_input
+        start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Прибытие"
 
