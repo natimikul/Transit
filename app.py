@@ -209,29 +209,35 @@ def send_today_report_email(recipient_emails, target_sheets):
     
     frames_today = []
     
-      # 1. Собираем строки с сегодняшней датой со всех выбранных листов
+    # 1. Собираем строки с сегодняшней датой со всех выбранных листов
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
             
-            # Если это лист Алм, берем строго 15-ю колонку по счету (индекс 14, это колонка O)
+            # Если это лист Алм, используем умный перевод 15-й колонки (индекс 14) в формат даты
             if s == "Алм" and len(df_sheet.columns) >= 15:
-                # Нам не важно, как она называется в коде или в таблице, берем её по физическому расположению
-                col_str = df_sheet.iloc[:, 14].astype(str)
-                mask = col_str.str.contains(today_str_1, na=False) | col_str.str.contains(today_str_2, na=False)
+                parsed_dates = pd.to_datetime(df_sheet.iloc[:, 14], errors='coerce')
+                mask = parsed_dates.dt.date == datetime.date.today()
             else:
-                # Для остальных листов оставляем поиск по всей строке
+                # Для остальных листов оставляем обычный поиск текста по всей строке
                 mask = df_sheet.astype(str).apply(
                     lambda row: row.str.contains(today_str_1, na=False) | row.str.contains(today_str_2, na=False), 
                     axis=1
                 ).any(axis=1)
-            
-            df_filtered = df_sheet[mask]
+
+            if not df_sheet[mask].empty:
+            df_filtered = df_sheet[mask]           
             if not df_filtered.empty:
                 df_filtered.insert(0, 'Источник (Лист)', s)
                 frames_today.append(df_filtered)
 
     # Склеиваем все найденные за сегодня строки
+        # Проверяем, нашли ли мы хоть какие-то строки перед тем, как склеивать их
+    if not frames_today:
+        st.warning("За сегодняшнее число строк в таблицах не найдено. Письмо не отправлено.")
+        return False
+
+    # Склеиваем найденные строки, если они есть
     df_today_result = pd.concat(frames_today, ignore_index=True)
 
     # 2. Создаем Excel-файл во вложении (в оперативной памяти)
