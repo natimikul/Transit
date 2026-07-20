@@ -208,18 +208,13 @@ def send_today_report_email(recipient_emails, target_sheets):
     today_str_2 = datetime.date.today().strftime('%Y-%m-%d') # Формат ГГГГ-ММ-ДД
     
     frames_today = []
-    
-       # 1. Собираем строки с сегодняшней датой со всех выбранных листов
+        # 1. Собираем строки с сегодняшней датой со всех выбранных листов
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
             
-            # ВРЕМЕННАЯ ДИАГНОСТИКА: выводим данные на экран
-            if s == "Алм" and "Расценен" in df_sheet.columns:
-                            
             # Если это лист Алм, проверяем колонку 'Расценен' с явным указанием формата дат
             if s == "Алм" and 'Расценен' in df_sheet.columns:
-                # Явно задаем формат ДД.ММ.ГГГГ, чтобы нули и текст не сбивали распознавание
                 parsed_dates = pd.to_datetime(df_sheet['Расценен'], format='%d.%m.%Y', errors='coerce')
                 mask = parsed_dates.dt.date == datetime.date.today()
 
