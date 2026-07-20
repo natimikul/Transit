@@ -319,7 +319,7 @@ if st.session_state.current_report is None:
         filter_by_client=True,
         allowed_statuses=None,
         filter_by_invoice=True,
-        invoice_text=счет_ввод
+        invoice_text=invoice_input
     )
     st.session_state.report_name = "Быстрый_поиск"
 
