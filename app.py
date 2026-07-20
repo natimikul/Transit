@@ -199,10 +199,10 @@ def send_today_report_email(recipient_emails, target_sheets):
     # 3. Настройка конфигурации SMTP (Берется из Secrets на Streamlit Cloud)
     # Перед запуском вам нужно будет добавить эти параметры в меню Secrets вашего Streamlit аккаунта.
     try:
-        smtp_server = st.secrets["email"]["smtp_server"]   # например: smtp.yandex.ru или smtp.mail.ru
-        smtp_port = st.secrets["email"]["smtp_port"]       # обычно 465 (для SSL) или 587 (для TLS)
-        sender_email = st.secrets["email"]["sender"]       # ваш технический ящик отправки
-        sender_password = st.secrets["email"]["password"] # специальный пароль приложения (не от личного кабинета!)
+        smtp_server =  "smtp.gmail.com"   # например: smtp.yandex.ru или smtp.mail.ru
+        smtp_port = 465      # обычно 465 (для SSL) или 587 (для TLS)
+        sender_email = "natimikul@gmail.com"       # ваш технический ящик отправки
+        sender_password = "cekg mswv wfbd efmk" # специальный пароль приложения (не от личного кабинета!)
     except Exception:
         st.error("Ошибка конфигурации! На Streamlit Cloud не настроены параметры почты в st.secrets.")
         return False
@@ -315,13 +315,21 @@ if st.session_state.current_report is not None:
         with c6:
             if st.button("💗 Оповестить"):
                 st.session_state.show_email_modal = not st.session_state.show_email_modal
-
 if st.session_state.get('show_email_modal', False):
-    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
-        emails = st.text_input("Введите адреса электронной почты через запятую:")
-        if st.button("🚀 Отправить сводку за сегодня"):
-            if not emails:
-                st.error("Укажите хотя бы один адрес!")
-            else:
-                st.success(f"📧 Сводка успешно отправлена на адреса: {emails}")
-                st.session_state.show_email_modal = False
+     with st.expander("📬 Настройка отправки уведомлений", expanded=True):
+         emails = st.text_input("Введите адреса электронной почты через запятую:")
+         if st.button("✉️ Отправить сводку за сегодня"):
+             if not emails:
+                 st.error("Укажите хотя бы один адрес!")
+             else:
+                 with st.spinner("Формирование отчета за сегодня и отправка email..."):
+                     # Вызываем функцию отправки. Передаем введенные email и список активных листов
+                     success = send_today_report_email(
+                         recipient_emails=emails,
+                         target_sheets=st.session_state.active_sheets
+                     )
+                     
+                     if success:
+                         st.success(f" Сводка успешно отправлена на адреса: {emails}")
+                         st.session_state.show_email_modal = False
+                         st.rerun()
