@@ -12,7 +12,7 @@ from io import BytesIO
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
-st.title("📦 Система мониторинга статуса отгрузки счетов")
+st.title("📦 Система мониторинга статуса счетов")
 
 st.markdown("""
 <style>
