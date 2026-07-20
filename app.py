@@ -286,60 +286,77 @@ def send_today_report_email(recipient_emails, target_sheets):
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 c1, c2, c3, c4 = st.columns(4)
+if "active_report_mode" not in st.session_state:
+    st.session_state.active_report_mode = "Поиск по Клиенту"
 
 with c1:
     if st.button("🔵 Поиск по Клиенту"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=None, invoice_text=invoice_input)
-        st.session_state.report_name = "Поиск_по_Клиенту"
+        st.session_state.active_report_mode = "Поиск по Клиенту"
         st.rerun()
 
 with c2:
-    if st.button("📑 Разрешения"):
-        # Исправлено: строго 2 листа
+    if st.button("📄 Разрешения"):
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], invoice_text=invoice_input)
-        st.session_state.report_name = "Разрешения"
+        st.session_state.active_report_mode = "Разрешения"
         st.rerun()
 
 with c3:
     if st.button("🚚 Отгружено"):
-        # Исправлено: строго 4 листа (без Алм)
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], invoice_text=invoice_input)
-        st.session_state.report_name = "Отгружено"
+        st.session_state.active_report_mode = "Отгружено"
         st.rerun()
 
 with c4:
-    if st.button("🏢 Прибытие"):
-        # Исправлено: строго 1 лист (Алм)
+    if st.button("🩻 Прибытие"):
         st.session_state.active_sheets = ["Алм"]
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"], invoice_text=invoice_input)
-        st.session_state.report_name = "Прибытие"
+        st.session_state.active_report_mode = "Прибытие"
         st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
 # Если отчет еще не сформирован кнопками, собираем его автоматически по фильтрам из полей ввода
-if st.session_state.current_report is None:
-    # Определяем колонки по умолчанию (как для поиска по клиенту)
-    default_cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыль (факт)', 'Статус']
+# Очищаем старый отчёт и строим его заново на основе выбранного режима кнопки
+cols_all = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыль (факт)', 'Статус']
+cols_no_finance = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
+
+# Проверяем, какой режим сейчас активен (если кнопка ещё не нажималась, ставим режим по умолчанию)
+current_mode = st.session_state.get("active_report_mode", "Поиск по Клиенту")
+
+if current_mode == "Поиск по Клиенту":
     st.session_state.current_report = build_report(
-        target_sheets=st.session_state.active_sheets,
-        required_columns=default_cols,
-        filter_by_client=True,
-        allowed_statuses=None,
-        filter_by_invoice=True,
-        invoice_text=invoice_input
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, allowed_statuses=None, 
+        filter_by_invoice=True, invoice_text=invoice_input
     )
-    st.session_state.report_name = "Быстрый_поиск"
+    st.session_state.report_name = "Поиск_по_Клиенту"
+
+elif current_mode == "Разрешения":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_no_finance, 
+        filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], 
+        filter_by_invoice=True, invoice_text=invoice_input
+    )
+    st.session_state.report_name = "Разрешения"
+
+elif current_mode == "Отгружено":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
+        filter_by_invoice=True, invoice_text=invoice_input
+    )
+    st.session_state.report_name = "Отгружено"
+
+elif current_mode == "Прибытие":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
+        filter_by_invoice=True, invoice_text=invoice_input
+    )
+    st.session_state.report_name = "Прибытие"
 
 if st.session_state.current_report is not None:
     st.write("---")
-    st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
+    st.subheader(f"📊 Результат отчета: {st.session_state.get('active_report_mode', 'Поиск по Клиенту')}")
     if st.session_state.current_report.empty:
         st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
