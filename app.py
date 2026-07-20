@@ -125,7 +125,7 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
     df_all = pd.concat(frames, ignore_index=True)
     
     # Фильтр по Дате счета
-    if 'Дата счета' in df_all.columns:
+   if 'Дата счета' in df_all.columns and not invoice_text:
         try:
             s_date = pd.to_datetime(start_filter).date()
             e_date = pd.to_datetime(end_filter).date()
@@ -137,12 +137,20 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
         except Exception:
             pass
 
-    # Фильтр по Номеру счета
+    # Улучшенный фильтр по Номеру счета
     if filter_by_invoice and invoice_text:
+        # Определяем, как именно называется колонка в этой таблице
+        target_col = None
         if 'Номер счета' in df_all.columns:
+            target_col = 'Номер счета'
+        elif '№ счета' in df_all.columns:
+            target_col = '№ счета'
+            
+        if target_col:
             search_invoices = [inv.strip().lower() for inv in invoice_text.split(',') if inv.strip()]
             if search_invoices:
-                df_all = df_all[df_all['Номер счета'].astype(str).str.lower().str.strip().apply(
+                # Фильтруем данные, игнорируя регистр и пробелы
+                df_all = df_all[df_all[target_col].astype(str).str.lower().str.strip().apply(
                     lambda x: any(inv in x for inv in search_invoices)
                 )]
    
