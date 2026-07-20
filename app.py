@@ -1,3 +1,10 @@
+# --- ДОПОЛНИТЕЛЬНЫЕ ИМПОРТЫ ДЛЯ ОТПРАВКИ ПОЧТЫ (Добавить в начало файла) ---
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
 import streamlit as st
 import pandas as pd
 import datetime
@@ -147,6 +154,103 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
             
     final_cols = [c for c in required_columns if c in df_all.columns]
     return df_all[final_cols] if not df_all.empty else pd.DataFrame()
+
+# --- ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ И ОТПРАВКИ СВОДКИ НА EMAIL ---
+def send_today_report_email(recipient_emails, target_sheets):
+    """
+    Собирает данные за сегодня со всех активных листов, 
+    формирует Excel и отправляет на указанные email-адреса.
+    """
+    today_str_1 = datetime.date.today().strftime('%d.%m.%Y') # Формат ДД.ММ.ГГГГ
+    today_str_2 = datetime.date.today().strftime('%Y-%m-%d') # Формат ГГГГ-ММ-ДД
+    
+    frames_today = []
+    
+    # 1. Собираем строки с сегодняшней датой со всех выбранных листов
+    for s in target_sheets:
+        if s in data_dict and not data_dict[s].empty:
+            df_sheet = data_dict[s].copy()
+            
+            # Ищем сегодняшнюю дату в текстовом виде по всем ячейкам таблицы
+            mask = df_sheet.astype(str).apply(
+                lambda row: row.str.contains(today_str_1, na=False) | row.str.contains(today_str_2, na=False), 
+                axis=1
+            ).any(axis=1)
+            
+            df_filtered = df_sheet[mask]
+            if not df_filtered.empty:
+                # Добавляем колонку с источником, чтобы понимать откуда счет
+                df_filtered.insert(0, 'Источник (Лист)', s)
+                frames_today.append(df_filtered)
+                
+    if not frames_today:
+        st.warning("За сегодняшнее число строк в таблицах не найдено. Письмо не отправлено.")
+        return False
+
+    # Склеиваем все найденные за сегодня строки
+    df_today_result = pd.concat(frames_today, ignore_index=True)
+
+    # 2. Создаем Excel-файл во вложении (в оперативной памяти)
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        df_today_result.to_excel(writer, index=False, sheet_name='Сводка_Сегодня')
+    excel_data = excel_buffer.getvalue()
+
+    # 3. Настройка конфигурации SMTP (Берется из Secrets на Streamlit Cloud)
+    # Перед запуском вам нужно будет добавить эти параметры в меню Secrets вашего Streamlit аккаунта.
+    try:
+        smtp_server = st.secrets["email"]["smtp_server"]   # например: smtp.yandex.ru или smtp.mail.ru
+        smtp_port = st.secrets["email"]["smtp_port"]       # обычно 465 (для SSL) или 587 (для TLS)
+        sender_email = st.secrets["email"]["sender"]       # ваш технический ящик отправки
+        sender_password = st.secrets["email"]["password"] # специальный пароль приложения (не от личного кабинета!)
+    except Exception:
+        st.error("Ошибка конфигурации! На Streamlit Cloud не настроены параметры почты в st.secrets.")
+        return False
+
+    # 4. Формирование тела письма по вашему шаблону
+    today_formatted = datetime.date.today().strftime('%d.%m.%Y')
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_emails  # Строка с адресами через запятую
+    msg['Subject'] = f"Мониторинг счетов — Сводка за {today_formatted}"
+
+    body = f"""Добрый день!
+
+Информируем Вас о статусе транзитных счетов на сегодня ({today_formatted}).
+Файл во вложении.
+"""
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+    # 5. Прикрепляем созданный Excel-файл
+    part = MIMEBase('application', 'octet-stream')
+    part.set_payload(excel_data)
+    encoders.encode_base64(part)
+    part.add_header(
+        'Content-Disposition',
+        f'attachment; filename="Сводка_транзитных_счетов_{today_formatted}.xlsx"'
+    )
+    msg.attach(part)
+
+    # 6. Подключение и отправка через SSL
+    try:
+        # Для большинства СНГ сервисов (Яндекс, Mail) используется SSL порт 465:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.starttls()
+            
+        server.login(sender_email, sender_password)
+        
+        # Разделяем список получателей для корректной отправки сервером
+        recipients_list = [email.strip() for email in recipient_emails.split(',') if email.strip()]
+        server.sendmail(sender_email, recipients_list, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Не удалось отправить письмо. Ошибка: {e}")
+        return False
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
