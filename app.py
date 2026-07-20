@@ -226,10 +226,10 @@ def send_today_report_email(recipient_emails, target_sheets):
                 ).any(axis=1)
 
             if not df_sheet[mask].empty:
-            df_filtered = df_sheet[mask]           
-            if not df_filtered.empty:
-                df_filtered.insert(0, 'Источник (Лист)', s)
-                frames_today.append(df_filtered)
+                df_filtered = df_sheet[mask]           
+                if not df_filtered.empty:
+                    df_filtered.insert(0, 'Источник (Лист)', s)
+                    frames_today.append(df_filtered)
 
     # Склеиваем все найденные за сегодня строки
         # Проверяем, нашли ли мы хоть какие-то строки перед тем, как склеивать их
