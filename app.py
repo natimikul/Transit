@@ -301,7 +301,7 @@ with c4:
         # Исправлено: строго 1 лист (Алм)
         st.session_state.active_sheets = ["Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"], , invoice_text=счет_ввод)
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"], invoice_text=счет_ввод)
         st.session_state.report_name = "Прибытие"
         st.rerun()
 
