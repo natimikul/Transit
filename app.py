@@ -342,7 +342,7 @@ if current_mode == "Поиск по Клиенту":
     st.session_state.current_report = build_report(
         st.session_state.active_sheets, cols_all, 
         filter_by_client=True, allowed_statuses=None, 
-        filter_by_invoice=True, invoice_text=invoice_input
+        filter_by_invoice=True, invoice_text=invoice_input,
         start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Поиск_по_Клиенту"
@@ -351,7 +351,7 @@ elif current_mode == "Разрешения":
     st.session_state.current_report = build_report(
         st.session_state.active_sheets, cols_no_finance, 
         filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], 
-        filter_by_invoice=True, invoice_text=invoice_input
+        filter_by_invoice=True, invoice_text=invoice_input,
         start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Разрешения"
@@ -360,7 +360,7 @@ elif current_mode == "Отгружено":
     st.session_state.current_report = build_report(
         st.session_state.active_sheets, cols_all, 
         filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
-        filter_by_invoice=True, invoice_text=invoice_input
+        filter_by_invoice=True, invoice_text=invoice_input,
         start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Отгружено"
@@ -371,7 +371,7 @@ elif current_mode == "Прибытие":
         filter_by_client=True, 
         allowed_statuses=None,  # <--- СТАВИМ None, ЧТОБЫ ПОКАЗАТЬ ВСЕ СТАТУСЫ ЛИСТА АЛМ
         filter_by_invoice=True, 
-        invoice_text=invoice_input
+        invoice_text=invoice_input,
         start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Прибытие"
