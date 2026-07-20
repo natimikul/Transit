@@ -213,10 +213,12 @@ def send_today_report_email(recipient_emails, target_sheets):
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
-            
-            # Если это лист Алм, используем умный перевод 15-й колонки (индекс 14) в формат даты
-            if s == "Алм" and len(df_sheet.columns) >= 15:
-                parsed_dates = pd.to_datetime(df_sheet.iloc[:, 14], errors='coerce')
+          if s == "Алм": st.write("Содержимое колонки Расценен:", df_sheet['Расценен'].unique())
+         
+                # Если это лист Алм, проверяем колонку 'Расценен'
+            if s == "Алм" and 'Расценен' in df_sheet.columns:
+                # Очищаем от времени (если оно есть) и переводим в формат даты
+                parsed_dates = pd.to_datetime(df_sheet['Расценен'], errors='coerce')
                 mask = parsed_dates.dt.date == datetime.date.today()
             else:
                 # Для остальных листов оставляем обычный поиск текста по всей строке
