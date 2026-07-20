@@ -61,7 +61,11 @@ for name, url in sheet_urls.items():
                      'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
                      'Прибыл (факт)', 'Статус', 'Расценен']
-        df.columns = col_names + list(range(len(df.columns) - len(col_names)))
+                # Находим реальное количество колонок в текущем листе
+        actual_col_count = len(df.columns)
+        # Назначаем имена только для тех колонок, которые физически существуют
+        df.columns = col_names[:actual_col_count] + list(range(max(0, actual_col_count - len(col_names))))
+
         if not df.empty and len(df) > 0:
             first_row_str = str(df.iloc[0].values).lower()
             if 'заявк' in first_row_str or 'счет' in first_row_str:
