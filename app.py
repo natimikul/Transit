@@ -285,7 +285,7 @@ with c1:
     if st.button("🔵 Поиск по Клиенту"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=None, invoice_text=счет_ввод)
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=None, invoice_text=invoice_input)
         st.session_state.report_name = "Поиск_по_Клиенту"
         st.rerun()
 
@@ -294,7 +294,7 @@ with c2:
         # Исправлено: строго 2 листа
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], invoice_text=счет_ввод)
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], invoice_text=invoice_input)
         st.session_state.report_name = "Разрешения"
         st.rerun()
 
@@ -303,7 +303,7 @@ with c3:
         # Исправлено: строго 4 листа (без Алм)
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], invoice_text=счет_ввод)
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], invoice_text=invoice_input)
         st.session_state.report_name = "Отгружено"
         st.rerun()
 
@@ -312,7 +312,7 @@ with c4:
         # Исправлено: строго 1 лист (Алм)
         st.session_state.active_sheets = ["Алм"]
         cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"], invoice_text=счет_ввод)
+        st.session_state.current_report = build_report(st.session_state.active_sheets, cols, filter_by_client=True, allowed_statuses=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"], invoice_text=invoice_input)
         st.session_state.report_name = "Прибытие"
         st.rerun()
 
