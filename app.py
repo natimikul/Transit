@@ -60,7 +60,7 @@ for name, url in sheet_urls.items():
         col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
                      'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
-                     'Прибыл (факт)', 'Статус']
+                     'Прибыл (факт)', 'Статус', 'Расценен']
         df.columns = col_names + list(range(len(df.columns) - len(col_names)))
         if not df.empty and len(df) > 0:
             first_row_str = str(df.iloc[0].values).lower()
@@ -214,11 +214,21 @@ def send_today_report_email(recipient_emails, target_sheets):
         if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
             
-            # Ищем сегодняшнюю дату в текстовом виде по всем ячейкам таблицы
-            mask = df_sheet.astype(str).apply(
-                lambda row: row.str.contains(today_str_1, na=False) | row.str.contains(today_str_2, na=False), 
-                axis=1
-            ).any(axis=1)
+            # Если это лист Алм, проверяем строго колонку O (Дата статуса Алм)
+            if s == "Алм" and 'Расценен' in df_sheet.columns:
+                col_str = df_sheet['Расценен'].astype(str)
+                mask = col_str.str.contains(today_str_1, na=False) | col_str.str.contains(today_str_2, na=False)
+            else:
+                # Для остальных листов оставляем поиск по всей строке
+                mask = df_sheet.astype(str).apply(
+                    lambda row: row.str.contains(today_str_1, na=False) | row.str.contains(today_str_2, na=False), 
+                    axis=1
+                ).any(axis=1)
+            
+            df_filtered = df_sheet[mask]
+            if not df_filtered.empty:
+                df_filtered.insert(0, 'Источник (Лист)', s)
+                frames_today.append(df_filtered)
             
             df_filtered = df_sheet[mask]
             if not df_filtered.empty:
