@@ -218,9 +218,10 @@ def send_today_report_email(recipient_emails, target_sheets):
             if s == "Алм" and "Расценен" in df_sheet.columns:
                 st.write("🔍 Содержимое колонки Расценен:", df_sheet['Расценен'].unique())
             
-            # Если это лист Алм, проверяем колонку 'Расценен'
+            # Если это лист Алм, проверяем колонку 'Расценен' с явным указанием формата дат
             if s == "Алм" and 'Расценен' in df_sheet.columns:
-                parsed_dates = pd.to_datetime(df_sheet['Расценен'], errors='coerce')
+                # Явно задаем формат ДД.ММ.ГГГГ, чтобы нули и текст не сбивали распознавание
+                parsed_dates = pd.to_datetime(df_sheet['Расценен'], format='%d.%m.%Y', errors='coerce')
                 mask = parsed_dates.dt.date == datetime.date.today()
 
             else:
