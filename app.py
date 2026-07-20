@@ -134,16 +134,30 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
 
     if 'Дата счета' in df_all.columns and is_invoice_empty:
 
-        try:
-            s_date = pd.to_datetime(start_filter).date()
-            e_date = pd.to_datetime(end_filter).date()
-            delta_days = (e_date - s_date).days
-            allowed_text_dates = [(s_date + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta_days + 1)]
-            allowed_text_dates += [(s_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta_days + 1)]
-            df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
-            df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
-        except Exception:
-            pass
+            # Принудительно переводим колонку в формат даты, игнорируя ошибки
+        df_all['⚙️ Временная Дата'] = pd.to_datetime(df_all['Дата счета'], format='%d.%m.%Y', errors='coerce')
+        mask_iso = df_all['⚙️ Временная Дата'].isna()
+        df_all.loc[mask_iso, '⚙️ Временная Дата'] = pd.to_datetime(df_all.loc[mask_iso, 'Дата счета'], format='%Y-%m-%d', errors='coerce')
+        
+        # Фильтруем по диапазону дат из переменных start_filter и end_filter
+                # Проверяем наличие переменных дат в globals или в сессии Streamlit
+        has_dates = ('start_filter' in globals() and 'end_filter' in globals()) or ('start_filter' in st.session_state and 'end_filter' in st.session_state)
+        
+        if has_dates:
+            # Берем значения оттуда, где они нашлись
+            s_filt = globals().get('start_filter') or st.session_state.get('start_filter')
+            e_filt = globals().get('end_filter') or st.session_state.get('end_filter')
+            
+            start_ts = pd.Timestamp(s_filt)
+            end_ts = pd.Timestamp(e_filt)
+
+            df_all = df_all[
+                 (df_all['⚙️ Временная Дата'] >= start_ts) & 
+                 (df_all['⚙️ Временная Дата'] <= end_ts)
+            ]
+        
+        # Удаляем временную техническую колонку
+        df_all.drop(columns=['⚙️ Временная Дата'], inplace=True, errors='ignore')
 
     # Улучшенный и безопасный фильтр по Номеру счета
     if filter_by_invoice and invoice_text:
