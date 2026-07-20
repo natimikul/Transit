@@ -308,7 +308,7 @@ with c3:
         st.rerun()
 
 with c4:
-    if st.button("🩻 Прибытие"):
+    if st.button("🏢 Прибытие"):
         st.session_state.active_sheets = ["Алм"]
         st.session_state.active_report_mode = "Прибытие"
         st.rerun()
@@ -349,8 +349,10 @@ elif current_mode == "Отгружено":
 elif current_mode == "Прибытие":
     st.session_state.current_report = build_report(
         st.session_state.active_sheets, cols_all, 
-        filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
-        filter_by_invoice=True, invoice_text=invoice_input
+        filter_by_client=True, 
+        allowed_statuses=None,  # <--- СТАВИМ None, ЧТОБЫ ПОКАЗАТЬ ВСЕ СТАТУСЫ ЛИСТА АЛМ
+        filter_by_invoice=True, 
+        invoice_text=invoice_input
     )
     st.session_state.report_name = "Прибытие"
 
