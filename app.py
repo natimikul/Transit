@@ -209,14 +209,15 @@ def send_today_report_email(recipient_emails, target_sheets):
     
     frames_today = []
     
-    # 1. Собираем строки с сегодняшней датой со всех выбранных листов
+      # 1. Собираем строки с сегодняшней датой со всех выбранных листов
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
             df_sheet = data_dict[s].copy()
             
-            # Если это лист Алм, проверяем строго колонку O (Дата статуса Алм)
-            if s == "Алм" and 'Расценен' in df_sheet.columns:
-                col_str = df_sheet['Расценен'].astype(str)
+            # Если это лист Алм, берем строго 15-ю колонку по счету (индекс 14, это колонка O)
+            if s == "Алм" and len(df_sheet.columns) >= 15:
+                # Нам не важно, как она называется в коде или в таблице, берем её по физическому расположению
+                col_str = df_sheet.iloc[:, 14].astype(str)
                 mask = col_str.str.contains(today_str_1, na=False) | col_str.str.contains(today_str_2, na=False)
             else:
                 # Для остальных листов оставляем поиск по всей строке
@@ -229,16 +230,6 @@ def send_today_report_email(recipient_emails, target_sheets):
             if not df_filtered.empty:
                 df_filtered.insert(0, 'Источник (Лист)', s)
                 frames_today.append(df_filtered)
-            
-            df_filtered = df_sheet[mask]
-            if not df_filtered.empty:
-                # Добавляем колонку с источником, чтобы понимать откуда счет
-                df_filtered.insert(0, 'Источник (Лист)', s)
-                frames_today.append(df_filtered)
-                
-    if not frames_today:
-        st.warning("За сегодняшнее число строк в таблицах не найдено. Письмо не отправлено.")
-        return False
 
     # Склеиваем все найденные за сегодня строки
     df_today_result = pd.concat(frames_today, ignore_index=True)
