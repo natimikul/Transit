@@ -127,10 +127,9 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
     df_all = pd.concat(frames, ignore_index=True)
     
     # Фильтр по Дате счета
-    # Проверяем, действительно ли поле номера счета пустое (убираем пробелы)
-        is_invoice_empty = not invoice_text or not str(invoice_text).strip()
+    is_invoice_empty = not invoice_text or not str(invoice_text).strip()
     
-        if 'Дата счета' in df_all.columns and is_invoice_empty:
+    if 'Дата счета' in df_all.columns and is_invoice_empty:
             
         # Принудительно переводим колонку в формат даты, игнорируя ошибки
         df_all['⚙️ Временная Дата'] = pd.to_datetime(df_all['Дата счета'], format='%d.%m.%Y', errors='coerce')
