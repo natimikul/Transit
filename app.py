@@ -47,10 +47,19 @@ sheet_urls = {
     "КЗ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1220441722&single=true&output=csv",
     "РБ разр": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=104608385&single=true&output=csv",
     "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
+    "Отгрузки": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1819554436&single=true&output=tsv"
 }
 
 # --- 3. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ ---
 data_dict = {}
+# Отдельная структура столбцов для листа "Отгрузки" (A, B, C, D ... N ... R, S)
+col_names_almaty_delivery = [
+    '№ заявки', '№ счета', 'Дата счета', 'Клиент',  # A, B, C, D
+    'stub4', 'stub5', 'stub6', 'stub7', 'stub8', 'stub9', 'stub10', 'stub11', 'stub12',  # E - M
+    'Статус',  # N (14-я колонка)
+    'stub14', 'stub15', 'stub16',  # O, P, Q
+    'Рейс', 'Дата рейса'  # R, S (18-я и 19-я колонки)
+]
 unique_statuses_from_db = set()
 
 for name, url in sheet_urls.items():
@@ -61,10 +70,13 @@ for name, url in sheet_urls.items():
                      'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
                      'Прибыл (факт)', 'Статус', 'Расценен']
-                # Находим реальное количество колонок в текущем листе
+        # Находим реальное количество колонок в текущем листе
         actual_col_count = len(df.columns)
         # Назначаем имена только для тех колонок, которые физически существуют
-        df.columns = col_names[:actual_col_count] + list(range(max(0, actual_col_count - len(col_names))))
+        if name == "Отгрузки":
+            df.columns = col_names_almaty_delivery[:actual_col_count] + list(range(max(0, actual_col_count - len(col_names_almaty_delivery))))
+        else:
+            df.columns = col_names[:actual_col_count] + list(range(max(0, actual_col_count - len(col_names))))
 
         if not df.empty and len(df) > 0:
             first_row_str = str(df.iloc[0].values).lower()
@@ -308,13 +320,13 @@ def send_today_report_email(recipient_emails, target_sheets):
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
 
 with c1:
     if st.button("🔵 Поиск по Клиенту"):
-        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
+        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм", "Отгрузки"]
         st.session_state.active_report_mode = "Поиск по Клиенту"
         st.rerun()
 
@@ -334,6 +346,12 @@ with c4:
     if st.button("🏢 Прибытие"):
         st.session_state.active_sheets = ["Алм"]
         st.session_state.active_report_mode = "Прибытие"
+        st.rerun()
+
+with c5:
+    if st.button("🚛 Отгрузки Алматы"):
+        st.session_state.active_sheets = ["Отгрузки"]
+        st.session_state.active_report_mode = "Отгрузки Алматы"
         st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
@@ -382,6 +400,20 @@ elif current_mode == "Прибытие":
         start_dt=start_filter, end_dt=end_filter 
     )
     st.session_state.report_name = "Прибытие"
+
+elif current_mode == "Отгрузки Алматы":
+    cols_almaty_delivery = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Статус', 'Рейс', 'Дата рейса']
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets,
+        cols_almaty_delivery,
+        filter_by_client=True,
+        allowed_statuses=["Отгружено клиенту"],
+        filter_by_invoice=True,
+        invoice_text=invoice_input,
+        start_dt=start_filter,
+        end_dt=end_filter
+    )
+    st.session_state.report_name = "Отгрузки_Алматы"
 
 if st.session_state.current_report is not None:
     st.write("---")
