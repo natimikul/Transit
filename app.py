@@ -402,7 +402,7 @@ elif current_mode == "Прибытие":
     st.session_state.report_name = "Прибытие"
 
 elif current_mode == "Отгрузки Алматы":
-    cols_almaty_delivery = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Статус', 'Рейс', 'Дата рейса']
+    cols_almaty_delivery = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Прибыл (факт)', 'Статус', 'Рейс', 'Дата рейса']
     st.session_state.current_report = build_report(
         st.session_state.active_sheets,
         cols_almaty_delivery,
