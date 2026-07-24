@@ -1,13 +1,46 @@
+# --- ДОПОЛНИТЕЛЬНЫЕ ИМПОРТЫ ДЛЯ ОТПРАВКИ ПОЧТЫ (Добавить в начало файла) ---
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
 import streamlit as st
 import pandas as pd
 import datetime
 from io import BytesIO
 
-# --- НАСТРОЙКА СТРАНИЦЫ ---
+# --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
-st.title("📦 Система мониторинга статуса отгрузки счетов")
+st.title("📦 Система мониторинга статуса счетов")
 
-# --- 1. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
+st.markdown("""
+<style>
+    div.stButton > button p {
+        font-size: 24px !important;
+        font-weight: bold !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 1. ЗАЩИТА ПАРОЛЕМ ---
+CORRECT_PASSWORD = "Password123"
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.subheader("🔒 Вход в систему")
+    user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
+    if st.button("Войти 🚀"):
+        if user_password == CORRECT_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("❌ Неверный пароль! Доступ заблокирован.")
+    st.stop()
+
+# --- 2. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
 sheet_urls = {
     "Вну": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=0&single=true&output=csv",
     "Бри-Дро": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=1228744427&single=true&output=csv",
@@ -16,51 +49,64 @@ sheet_urls = {
     "Алм": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=289794996&single=true&output=csv"
 }
 
-# --- 2. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ БЕЗ ВЛОЖЕННЫХ ФУНКЦИЙ ---
+# --- 3. ЗАГРУЗКА И СТАНДАРТИЗАЦИЯ ТАБЛИЦ ---
 data_dict = {}
+unique_statuses_from_db = set()
+
 for name, url in sheet_urls.items():
     try:
-        # Скачиваем CSV-лист напрямую
         df = pd.read_csv(url, encoding='utf-8-sig', header=None)
         df = df.dropna(how='all').reset_index(drop=True)
-        
-        # Задаем жесткий порядок заголовков колонок
         col_names = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад', 
                      'Разрешение', 'Дата отправки на разрешение', 'Плановая дата отгрузки', 
                      'Дата отгрузки (факт)', 'Транзит (дней)', 'Плановая дата прибытия', 
-                     'Прибыл (факт)', 'Статус']
-        
-        df.columns = col_names + list(range(len(df.columns) - len(col_names)))
-        
-        # Срезаем текстовую строку шапки, если она попала в данные
-        if not df.empty and ('заявк' in str(df.iloc[0]).lower() or 'счет' in str(df.iloc[0]).lower()):
-            df = df.iloc[1:].reset_index(drop=True)
-            
+                     'Прибыл (факт)', 'Статус', 'Расценен']
+                # Находим реальное количество колонок в текущем листе
+        actual_col_count = len(df.columns)
+        # Назначаем имена только для тех колонок, которые физически существуют
+        df.columns = col_names[:actual_col_count] + list(range(max(0, actual_col_count - len(col_names))))
+
+        if not df.empty and len(df) > 0:
+            first_row_str = str(df.iloc[0].values).lower()
+            if 'заявк' in first_row_str or 'счет' in first_row_str:
+                df = df.iloc[1:].reset_index(drop=True)
+                         
         data_dict[name] = df
     except Exception:
         data_dict[name] = pd.DataFrame()
+list_all_statuses = [
+    "Создан",
+    "В сборке",
+    "В сборке, ожидает разрешения",
+    "В пути",
+    "Задержка поставки",
+    "Прибыл на склад Алматы",
+    "Готов к отгрузке клиенту"
+]
 
-# --- 3. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
-if 'current_report' not in st.session_state:
-    st.session_state.current_report = None
-if 'report_name' not in st.session_state:
-    st.session_state.report_name = ""
-if 'show_email_modal' not in st.session_state:
-    st.session_state.show_email_modal = False
+# --- 4. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
+if 'current_report' not in st.session_state: st.session_state.current_report = None
+if 'report_name' not in st.session_state: st.session_state.report_name = ""
+if 'show_email_modal' not in st.session_state: st.session_state.show_email_modal = False
+if 'active_sheets' not in st.session_state: st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
 
-# --- 4. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
+# --- 5. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
 st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
 
 with col_client:
-    client_input = st.text_input("Наименование клиента (можно несколько через запятую):", placeholder="Например: Авиа, Техно, Рольф")
+    client_input = st.text_input("Фильтр по Клиенту (можно через запятую):", "")
+    invoice_input = st.text_input("Фильтр по Номеру счета (можно через запятую):", "")
+    # Если пользователь начал писать в любое из полей, сбрасываем старый кнопочный отчет
+    if client_input or invoice_input:
+        st.session_state.current_report = None
 
 with col_date:
     today_dt = datetime.date.today()
     default_start_dt = today_dt - datetime.timedelta(days=30)
     date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
-
-# Разбираем границы выбранного периода
+    selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
+  
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_filter, end_filter = date_range[0], date_range[1]
 elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
@@ -68,31 +114,63 @@ elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
 else:
     start_filter, end_filter = default_start_dt, today_dt
 
-# Выводим количество полученных строк для оперативной диагностики
-# Выводим суммарное количество строк со всех пяти листов для контроля
-total_rows = sum(len(df) for df in data_dict.values())
-st.write(f"📊 Всего загружено строк со всех 5 листов таблицы: {total_rows}")
+# Считаем строки ТОЛЬКО на тех листах, которые выбраны текущим отчетом
+total_rows = sum(len(data_dict[s]) for s in st.session_state.active_sheets if s in data_dict)
+sheets_text = ", ".join(st.session_state.active_sheets)
+st.write(f"📊 Обработано строк: {total_rows} (листы: {sheets_text})")
 
-# --- 5. ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ОТЧЕТОВ ---
-def build_report(target_sheets, required_columns, filter_by_client=True):
+# --- 6. УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ---
+def build_report(target_sheets, required_columns, filter_by_client=True, allowed_statuses=None, filter_by_invoice=True, invoice_text="", client_text="", start_dt=None, end_dt=None):
+
     frames = []
     for s in target_sheets:
         if s in data_dict and not data_dict[s].empty:
             frames.append(data_dict[s].copy())
-    if not frames:
-        return pd.DataFrame()
+    if not frames: return pd.DataFrame()
         
     df_all = pd.concat(frames, ignore_index=True)
     
-    # Текстовый фильтр временного диапазона дат счета
-    if 'Дата счета' in df_all.columns:
-        delta = end_filter - start_filter
-        allowed_text_dates = [(start_filter + datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(delta.days + 1)]
-        allowed_text_dates += [(start_filter + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
-        df_all['Дата счета'] = df_all['Дата счета'].astype(str).str.strip()
-        df_all = df_all[df_all['Дата счета'].isin(allowed_text_dates)]
+    # Фильтр по Дате счета
+    is_invoice_empty = not invoice_text or not str(invoice_text).strip()
+    
+    if 'Дата счета' in df_all.columns and is_invoice_empty:
+            
+        # Принудительно переводим колонку в формат даты, игнорируя ошибки
+        df_all['⚙️ Временная Дата'] = pd.to_datetime(df_all['Дата счета'], format='%d.%m.%Y', errors='coerce')
+        mask_iso = df_all['⚙️ Временная Дата'].isna()
+        df_all.loc[mask_iso, '⚙️ Временная Дата'] = pd.to_datetime(df_all.loc[mask_iso, 'Дата счета'], format='%Y-%m-%d', errors='coerce')
         
-    # Всеядный поиск по клиенту с вычищением знаков препинания, точек и пробелов
+        # Безопасно фильтруем по переданным датам, ТОЛЬКО если они физически существуют
+        if start_dt is not None and end_dt is not None and not pd.isna(start_dt) and not pd.isna(end_dt):
+            start_ts = pd.Timestamp(start_dt)
+            end_ts = pd.Timestamp(end_dt)
+            
+            df_all = df_all[
+                (df_all['⚙️ Временная Дата'] >= start_ts) & 
+                (df_all['⚙️ Временная Дата'] <= end_ts)
+            ]
+        
+        # Удаляем временную техническую колонку
+        df_all.drop(columns=['⚙️ Временная Дата'], inplace=True, errors='ignore')
+
+    # Улучшенный и безопасный фильтр по Номеру счета
+    if filter_by_invoice and invoice_text:
+        target_col = None
+        if 'Номер счета' in df_all.columns:
+            target_col = 'Номер счета'
+        elif '№ счета' in df_all.columns:
+            target_col = '№ счета'
+            
+        if target_col:
+            # Очищаем пользовательский ввод
+            search_invoices = [inv.strip().lower() for inv in invoice_text.split(',') if inv.strip()]
+            if search_invoices:
+                # Безопасно приводим всю колонку к нижнему регистру, заменяя NaN на пустую строку
+                clean_series = df_all[target_col].fillna("").astype(str).str.lower().str.strip()
+                # Фильтруем: оставляем строки, где хотя бы один номер из поиска совпал
+                df_all = df_all[clean_series.apply(lambda x: any(inv in x for inv in search_invoices))]
+   
+    # Фильтр по Наименованию Клиента
     if filter_by_client and client_input and 'Клиент' in df_all.columns:
         clean_text = lambda v: str(v).lower().replace(" ", "").replace(".", "").replace(",", "").replace('"', '').replace("'", "")
         search_words = [clean_text(w) for w in client_input.split(",") if w.strip()]
@@ -100,47 +178,219 @@ def build_report(target_sheets, required_columns, filter_by_client=True):
             client_mask = df_all['Клиент'].apply(lambda x: any(word in clean_text(x) for word in search_words))
             df_all = df_all[client_mask]
             
-    final_cols = [c for c in required_columns if c in df_all.columns]
-    if not df_all.empty:
-        return df_all[final_cols]
-    return pd.DataFrame()
+    # Фильтр по Статусу (Системные кнопки отчетов)
+    if allowed_statuses and 'Статус' in df_all.columns:
+        df_all['🤖 Системный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
+        status_list = [str(st_item).strip().lower() for st_item in allowed_statuses]
+        df_all = df_all[df_all['🤖 Системный Статус'].isin(status_list)]
+        df_all.drop(columns=['🤖 Системный Статус'], inplace=True)
+    # Фильтр по Статусу из выпадающего списка на экране
+    if 'selected_dropdown_statuses' in st.session_state and st.session_state.selected_dropdown_statuses and 'Статус' in df_all.columns:
+        df_all['⚙️ Временный Статус'] = df_all['Статус'].astype(str).str.strip().str.lower()
+        dropdown_list = [str(st_item).strip().lower() for st_item in st.session_state.selected_dropdown_statuses]
+        df_all = df_all[df_all['⚙️ Временный Статус'].isin(dropdown_list)]
+        df_all.drop(columns=['⚙️ Временный Статус'], inplace=True)
 
-# --- 6. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
+    # Фильтр по Выпадающему списку статусов
+    if selected_dropdown_statuses and 'Статус' in df_all.columns:
+        df_all = df_all[df_all['Статус'].astype(str).str.strip().isin(selected_dropdown_statuses)]
+            
+    final_cols = [c for c in required_columns if c in df_all.columns]
+    return df_all[final_cols] if not df_all.empty else pd.DataFrame()
+
+# --- ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ И ОТПРАВКИ СВОДКИ НА EMAIL ---
+def send_today_report_email(recipient_emails, target_sheets):
+    """
+    Собирает данные за сегодня со всех активных листов, 
+    формирует Excel и отправляет на указанные email-адреса.
+    """
+    today_str_1 = datetime.date.today().strftime('%d.%m.%Y') # Формат ДД.ММ.ГГГГ
+    today_str_2 = datetime.date.today().strftime('%Y-%m-%d') # Формат ГГГГ-ММ-ДД
+    
+    frames_today = []
+        # 1. Собираем строки с сегодняшней датой со всех выбранных листов
+    for s in target_sheets:
+        if s in data_dict and not data_dict[s].empty:
+            df_sheet = data_dict[s].copy()
+            
+            # Если это лист Алм, проверяем колонку 'Расценен' с явным указанием формата дат
+            if s == "Алм" and 'Расценен' in df_sheet.columns:
+                parsed_dates = pd.to_datetime(df_sheet['Расценен'], format='%d.%m.%Y', errors='coerce')
+                mask = parsed_dates.dt.date == datetime.date.today()
+
+            else:
+                # Для остальных листов оставляем обычный поиск текста по всей строке
+                mask = df_sheet.astype(str).apply(
+                    lambda row: row.str.contains(today_str_1, na=False) | row.str.contains(today_str_2, na=False), 
+                    axis=1
+                ).any(axis=1)
+
+            if not df_sheet[mask].empty:
+               df_filtered = df_sheet[mask]
+               if not df_filtered.empty:
+                  df_filtered.insert(0, 'Источник (Лист)', s)
+                  frames_today.append(df_filtered)
+
+    # Склеиваем все найденные за сегодня строки
+        # Проверяем, нашли ли мы хоть какие-то строки перед тем, как склеивать их
+    if not frames_today:
+        st.warning("За сегодняшнее число строк в таблицах не найдено. Письмо не отправлено.")
+        return False
+
+    # Склеиваем найденные строки, если они есть
+    df_today_result = pd.concat(frames_today, ignore_index=True)
+
+    # 2. Создаем Excel-файл во вложении (в оперативной памяти)
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        df_today_result.to_excel(writer, index=False, sheet_name='Сводка_Сегодня')
+    excel_data = excel_buffer.getvalue()
+
+    # 3. Настройка конфигурации SMTP (Берется из Secrets на Streamlit Cloud)
+    # Перед запуском вам нужно будет добавить эти параметры в меню Secrets вашего Streamlit аккаунта.
+    try:
+        smtp_server =  "smtp.gmail.com"   # например: smtp.yandex.ru или smtp.mail.ru
+        smtp_port = 465      # обычно 465 (для SSL) или 587 (для TLS)
+        sender_email = "natimikul@gmail.com"       # ваш технический ящик отправки
+        sender_password = "cekg mswv wfbd efmk" # специальный пароль приложения (не от личного кабинета!)
+    except Exception:
+        st.error("Ошибка конфигурации! На Streamlit Cloud не настроены параметры почты в st.secrets.")
+        return False
+
+    # 4. Формирование тела письма по вашему шаблону
+    today_formatted = datetime.date.today().strftime('%d.%m.%Y')
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_emails  # Строка с адресами через запятую
+    msg['Subject'] = f"Мониторинг счетов — Сводка за {today_formatted}"
+
+    body = f"""Добрый день!
+
+Информируем Вас о смене статуса транзитных счетов на сегодня ({today_formatted}).
+Файл во вложении.
+"""
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+      # 5. Прикрепляем созданный Excel-файл
+    filename = f"Svodka_tranzitnyh_schetov_{today_formatted}.xlsx"
+    
+    part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    part.set_payload(excel_data)
+    encoders.encode_base64(part)
+    
+    part.add_header(
+        'Content-Disposition',
+        'attachment',
+        filename=filename
+    )
+    msg.attach(part)
+
+    # 6. Подключение и отправка через SSL
+    try:
+        # Для большинства СНГ сервисов (Яндекс, Mail) используется SSL порт 465:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.starttls()
+            
+        server.login(sender_email, sender_password)
+        
+        # Разделяем список получателей для корректной отправки сервером
+        recipients_list = [email.strip() for email in recipient_emails.split(',') if email.strip()]
+        server.sendmail(sender_email, recipients_list, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Не удалось отправить письмо. Ошибка: {e}")
+        return False
+
+# --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 c1, c2, c3, c4 = st.columns(4)
+if "active_report_mode" not in st.session_state:
+    st.session_state.active_report_mode = "Поиск по Клиенту"
 
 with c1:
     if st.button("🔵 Поиск по Клиенту"):
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True)
-        st.session_state.report_name = "Поиск_по_Клиенту"
+        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"]
+        st.session_state.active_report_mode = "Поиск по Клиенту"
+        st.rerun()
 
 with c2:
-    if st.button("🟣 Разрешения"):
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=False)
-        st.session_state.report_name = "Разрешения"
+    if st.button("📄 Разрешения"):
+        st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
+        st.session_state.active_report_mode = "Разрешения"
+        st.rerun()
 
 with c3:
-    if st.button("🟡 Отгружено"):
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Статус']
-        st.session_state.current_report = build_report(["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм"], cols, filter_by_client=True)
-        st.session_state.report_name = "Отгружено"
+    if st.button("🚚 Отгружено"):
+        st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
+        st.session_state.active_report_mode = "Отгружено"
+        st.rerun()
 
 with c4:
-    if st.button("🟢 Прибытие"):
-        cols = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Дата отгрузки (факт)', 'Прибыл (факт)', 'Статус']
-        st.session_state.current_report = build_report(["Алм"], cols, filter_by_client=True)
-        st.session_state.report_name = "Прибытие"
+    if st.button("🏢 Прибытие"):
+        st.session_state.active_sheets = ["Алм"]
+        st.session_state.active_report_mode = "Прибытие"
+        st.rerun()
 
-# --- 7. ВЫВОД РЕЗУЛЬТАТОВ И СКАЧИВАНИЕ EXCEL ---
+# --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
+# Если отчет еще не сформирован кнопками, собираем его автоматически по фильтрам из полей ввода
+# Очищаем старый отчёт и строим его заново на основе выбранного режима кнопки
+cols_all = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыль (факт)', 'Статус']
+cols_no_finance = ['№ заявки', '№ счета', 'Дата счета', 'Клиент', 'Наименование товара', 'Плановая дата отгрузки', 'Плановая дата прибытия', 'Статус']
+
+# Проверяем, какой режим сейчас активен (если кнопка ещё не нажималась, ставим режим по умолчанию)
+current_mode = st.session_state.get("active_report_mode", "Поиск по Клиенту")
+
+if current_mode == "Поиск по Клиенту":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, allowed_statuses=None, 
+        filter_by_invoice=True, invoice_text=invoice_input,
+        start_dt=start_filter, end_dt=end_filter 
+    )
+    st.session_state.report_name = "Поиск_по_Клиенту"
+
+elif current_mode == "Разрешения":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_no_finance, 
+        filter_by_client=True, allowed_statuses=["Создан", "В сборке, ожидает разрешения"], 
+        filter_by_invoice=True, invoice_text=invoice_input,
+        start_dt=start_filter, end_dt=end_filter 
+    )
+    st.session_state.report_name = "Разрешения"
+
+elif current_mode == "Отгружено":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, allowed_statuses=["Создан", "В сборке", "В пути", "Задержка поставки"], 
+        filter_by_invoice=True, invoice_text=invoice_input,
+        start_dt=start_filter, end_dt=end_filter 
+    )
+    st.session_state.report_name = "Отгружено"
+
+elif current_mode == "Прибытие":
+    st.session_state.current_report = build_report(
+        st.session_state.active_sheets, cols_all, 
+        filter_by_client=True, 
+        allowed_statuses=None,  # <--- СТАВИМ None, ЧТОБЫ ПОКАЗАТЬ ВСЕ СТАТУСЫ ЛИСТА АЛМ
+        filter_by_invoice=True, 
+        invoice_text=invoice_input,
+        start_dt=start_filter, end_dt=end_filter 
+    )
+    st.session_state.report_name = "Прибытие"
+
 if st.session_state.current_report is not None:
     st.write("---")
-    st.subheader(f"📈 Результат отчета: {st.session_state.report_name.replace('_', ' ')}")
+    st.subheader(f"📊 Результат отчета: {st.session_state.get('active_report_mode', 'Поиск по Клиенту')}")
     if st.session_state.current_report.empty:
-        st.info("По заданным параметрам записей не найдено. Проверьте правильность дат.")
+        st.info("По заданным параметрам записей не найдено. Смените фильтр или период.")
     else:
-        st.dataframe(st.session_state.current_report, hide_index=True, use_container_width=True)
+        st.data_editor(st.session_state.current_report, hide_index=True, use_container_width=True, disabled=True)
+
         c5, c6 = st.columns(2)
         with c5:
             output = BytesIO()
@@ -156,13 +406,21 @@ if st.session_state.current_report is not None:
         with c6:
             if st.button("💗 Оповестить"):
                 st.session_state.show_email_modal = not st.session_state.show_email_modal
-
 if st.session_state.get('show_email_modal', False):
-    with st.expander("📬 Настройка отправки уведомлений", expanded=True):
-        emails = st.text_input("Введите адреса электронной почты через запятую:")
-        if st.button("🚀 Отправить сводку за сегодня"):
-            if not emails:
-                st.error("Укажите хотя бы один адрес!")
-            else:
-                st.success(f"📧 Сводка успешно отправлена на адреса: {emails}")
-                st.session_state.show_email_modal = False
+     with st.expander("📬 Настройка отправки уведомлений", expanded=True):
+         emails = st.text_input("Введите адреса электронной почты через запятую:")
+         if st.button("✉️ Отправить сводку за сегодня"):
+             if not emails:
+                 st.error("Укажите хотя бы один адрес!")
+             else:
+                 with st.spinner("Формирование отчета за сегодня и отправка email..."):
+                     # Вызываем функцию отправки. Передаем введенные email и список активных листов
+                     success = send_today_report_email(
+                         recipient_emails=emails,
+                         target_sheets=st.session_state.active_sheets
+                     )
+                     
+                     if success:
+                         st.success(f" Сводка успешно отправлена на адреса: {emails}")
+                         st.session_state.show_email_modal = False
+                         st.rerun()
