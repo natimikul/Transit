@@ -8,12 +8,15 @@ def show_replenishment_page():
     POPOLN_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pubhtml?gid=60140824&single=true&output=csv"
     
     try:
-        df = pd.read_csv(POPOLN_URL, encoding='utf-8-sig', header=None)
+        # on_bad_lines='skip' заставит код просто пропускать кривые строчки с лишними ячейками, не ломая сайт
+        df = pd.read_csv(POPOLN_URL, encoding='utf-8-sig', header=None, on_bad_lines='skip')
         df = df.dropna(how='all').reset_index(drop=True)
         
-        df.columns = ['Дата отгрузки', 'Локация', '№ документа', 'Страна', 'Плановая дата прибытия'] + list(range(len(df.columns) - 5))
+        # Берем только первые 5 колонок, которые нам нужны (A, B, C, D, E), отсекая всё лишнее справа
+        df = df.iloc[:, :5]
+        df.columns = ['Дата отгрузки', 'Локация', '№ документа', 'Страна', 'Плановая дата прибытия']
         
-        if not df.empty and ('дата' in str(df.iloc[0]).lower() or 'локация' in str(df.iloc[0]).lower()):
+        if not df.empty and ('дата' in str(df.values).lower() or 'локация' in str(df.values).lower()):
             df = df.iloc[1:].reset_index(drop=True)
             
     except Exception as e:
