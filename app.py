@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 from io import BytesIO
+from replenishment import show_replenishment_page
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
@@ -354,6 +355,11 @@ with c5:
         st.session_state.active_report_mode = "Отгрузки Алматы"
         st.rerun()
 
+with c6_new:
+    if st.button("🚛 Машины в пути"):
+        st.session_state.active_report_mode = "Машины в пути"
+        st.rerun()
+
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
 # Если отчет еще не сформирован кнопками, собираем его автоматически по фильтрам из полей ввода
 # Очищаем старый отчёт и строим его заново на основе выбранного режима кнопки
@@ -362,6 +368,10 @@ cols_no_finance = ['№ заявки', '№ счета', 'Дата счета', 
 
 # Проверяем, какой режим сейчас активен (если кнопка ещё не нажималась, ставим режим по умолчанию)
 current_mode = st.session_state.get("active_report_mode", "Поиск по Клиенту")
+
+if current_mode == "Машины в пути":
+    show_replenishment_page()
+    st.stop()
 
 if current_mode == "Поиск по Клиенту":
     st.session_state.current_report = build_report(
