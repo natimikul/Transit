@@ -344,7 +344,7 @@ with c3:
         
 # --- НАША ПЕРЕМЕЩЕННАЯ И СТИЛИЗОВАННАЯ КНОПКА ---
 with c4_new:
-    if st.button("🟪 Авто в пути"):
+    if st.button("🚀 Авто в пути"): # Заменили фиолетовый квадрат на ракету
         st.session_state.active_report_mode = "Авто в пути"
         st.rerun()
 
