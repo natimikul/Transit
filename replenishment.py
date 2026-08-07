@@ -2,19 +2,21 @@ import streamlit as st
 import pandas as pd
 
 def show_replenishment_page():
-    st.subheader("🟪 Мониторинг автомобилей в пути (Лист Пополн)")
+    st.subheader("🟪 Авто в пути (Лист Пополн)")
     
-    # 1. Ссылка на веб-публикацию нового листа "Пополн"
+    # Сюда вставьте вашу НАСТОЯЩУЮ CSV-ссылку на лист "Пополн"
     POPOLN_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=60140824&single=true&output=csv"
     
     try:
+        # Читаем первые 6 колонок (A, B, C, D, E, F)
         df = pd.read_csv(POPOLN_URL, encoding='utf-8-sig', header=None, on_bad_lines='skip')
         df = df.dropna(how='all').reset_index(drop=True)
         
-        df = df.iloc[:, :5]
-        df.columns = ['Дата отгрузки', 'Локация', '№ документа', 'Страна', 'Плановая дата прибытия']
+        df = df.iloc[:, :6]
+        df.columns = ['Дата отгрузки', 'Страна', 'Локация', '№ документа', '№ РКЗ', 'Плановая дата прибытия']
         
-        if not df.empty and ('дата' in str(df.values).lower() or 'локация' in str(df.values).lower()):
+        # Пропускаем шапку таблицы, если она загрузилась
+        if not df.empty and ('дата' in str(df.values).lower() or 'страна' in str(df.values).lower()):
             df = df.iloc[1:].reset_index(drop=True)
             
     except Exception as e:
@@ -22,23 +24,27 @@ def show_replenishment_page():
         return
 
     if df.empty:
-        st.info("Нет данных по автомобилям.")
+        st.info("Нет данных по автомобилям на листе 'Пополн'.")
         return
 
-    groupby_cols = ['Дата отгрузки', 'Локация', 'Страна', 'Плановая дата прибытия']
-    
-    df['Локация'] = df['Локация'].fillna("Не указана").astype(str).str.strip()
+    # Заполняем пустоты, чтобы строки корректно группировались по машинам
     df['Дата отгрузки'] = df['Дата отгрузки'].fillna("-").astype(str).str.strip()
     df['Страна'] = df['Страна'].fillna("Неизвестно").astype(str).str.strip()
+    df['Локация'] = df['Локация'].fillna("Не указана").astype(str).str.strip()
     df['Плановая дата прибытия'] = df['Плановая дата прибытия'].fillna("-").astype(str).str.strip()
-    df['№ документа'] = df['№ документа'].fillna("Без номера").astype(str).str.strip()
+    
+    # Документы переводим в строку, заменяя NaN на пустую строку для фильтрации
+    df['№ документа'] = df['№ документа'].fillna("").astype(str).str.strip()
+    df['№ РКЗ'] = df['№ РКЗ'].fillna("").astype(str).str.strip()
 
+    # Группируем по уникальным рейсам авто
+    groupby_cols = ['Дата отгрузки', 'Страна', 'Локация', 'Плановая дата прибытия']
     unique_cars = df[groupby_cols].drop_duplicates()
 
     for _, car in unique_cars.iterrows():
         country_str = car['Страна'].lower()
         
-        # Превращаем текстовые флаги "BY" и "RU" со скриншота в настоящие цветные эмодзи
+        # Определяем цветной флаг по значению из колонки B
         if 'беларусь' in country_str or 'рб' in country_str or 'by' in country_str:
             flag_emoji = "🇧🇾"
         elif 'россия' in country_str or 'рф' in country_str or 'ru' in country_str:
@@ -46,30 +52,46 @@ def show_replenishment_page():
         else:
             flag_emoji = "🏳️"
             
-        location_info = f" ({car['Локация']})" if car['Локация'] != "Не указана" else ""
+        # Формируем строгую последовательность заголовка по вашей задаче:
+        # Дата отгрузки, Флаг страны, Страна, Локация авто, Плановая дата прибытия
         header_title = (
-            f"🟪 {flag_emoji} Отгрузка: {car['Дата отгрузки']} | "
-            f"Маршрут: {car['Страна']}{location_info} | "
+            f"📅 Отгрузка: {car['Дата отгрузки']} | "
+            f"{flag_emoji} {car['Страна']} | "
+            f"📍 Локация: {car['Локация']} | "
             f"🏁 План прибытия: {car['Плановая дата прибытия']}"
         )
         
-        car_documents = df[
+        # Фильтруем все строки, принадлежащие текущему авто
+        car_rows = df[
             (df['Дата отгрузки'] == car['Дата отгрузки']) &
-            (df['Локация'] == car['Локация']) &
             (df['Страна'] == car['Страна']) &
+            (df['Локация'] == car['Локация']) &
             (df['Плановая дата прибытия'] == car['Плановая дата прибытия'])
-        ]['№ документа'].tolist()
+        ]
         
+        # Собираем списки документов, исключая пустые ячейки
+        docs_list = [d for d in car_rows['№ документа'].tolist() if d != ""]
+        rkz_list = [r for r in car_rows['№ РКЗ'].tolist() if r != ""]
+        
+        # Если в этой машине вообще есть хоть какие-то документы, выводим её expander
         with st.expander(header_title):
-            st.markdown(f"**📄 Список документов в данном автомобиле ({len(car_documents)} шт.):**")
-            
-            # Делим документы поровну на две колонки внутри раскрывающегося блока
             doc_col1, doc_col2 = st.columns(2)
-            midpoint = (len(car_documents) + 1) // 2
             
             with doc_col1:
-                for doc in car_documents[:midpoint]:
-                    st.markdown(f"- `{doc}`")
+                st.markdown(f"**📄 № документа ({len(docs_list)} шт.):**")
+                if docs_list:
+                    for doc in docs_list:
+                        st.markdown(f"- `{doc}`")
+                else:
+                    st.write("*Нет данных*")
+                    
             with doc_col2:
-                for doc in car_documents[midpoint:]:
-                    st.markdown(f"- `{doc}`")
+                st.markdown(f"**📑 № РКЗ ({len(rkz_list)} шт.):**")
+                if rkz_list:
+                    for rkz in rkz_list:
+                        # Если ячейка содержит перенос строк (как в первой строке вашего скрина), разбиваем её
+                        for sub_rkz in rkz.split('\n'):
+                            if sub_rkz.strip():
+                                st.markdown(f"- `{sub_rkz.strip()}`")
+                else:
+                    st.write("*Нет данных*")
