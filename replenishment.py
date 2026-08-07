@@ -5,7 +5,7 @@ def show_replenishment_page():
     st.subheader("🟪 Мониторинг автомобилей в пути (Лист Пополн)")
     
     # 1. Ссылка на веб-публикацию нового листа "Пополн"
-    POPOLN_URL = "https://google.com"
+    POPOLN_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=60140824&single=true&output=csv"
     
     try:
         df = pd.read_csv(POPOLN_URL, encoding='utf-8-sig', header=None, on_bad_lines='skip')
