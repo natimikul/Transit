@@ -321,7 +321,8 @@ def send_today_report_email(recipient_emails, target_sheets):
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
-c1, c2, c3, c4, c5, c6_new = st.columns(6)
+c1, c2, c3, c4_new, c4, c5 = st.columns(6)
+
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
 
@@ -330,17 +331,21 @@ with c1:
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм", "Отгрузки"]
         st.session_state.active_report_mode = "Поиск по Клиенту"
         st.rerun()
-
 with c2:
     if st.button("📄 Разрешения"):
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Разрешения"
         st.rerun()
-
 with c3:
     if st.button("🚚 Отгружено"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Отгружено"
+        st.rerun()
+        
+# --- НАША ПЕРЕМЕЩЕННАЯ И СТИЛИЗОВАННАЯ КНОПКА ---
+with c4_new:
+    if st.button("🟪 Авто в пути"):
+        st.session_state.active_report_mode = "Авто в пути"
         st.rerun()
 
 with c4:
@@ -348,16 +353,10 @@ with c4:
         st.session_state.active_sheets = ["Алм"]
         st.session_state.active_report_mode = "Прибытие"
         st.rerun()
-
 with c5:
     if st.button("🚛 Отгрузки Алматы"):
         st.session_state.active_sheets = ["Отгрузки"]
         st.session_state.active_report_mode = "Отгрузки Алматы"
-        st.rerun()
-
-with c6_new:
-    if st.button("🚛 Машины в пути"):
-        st.session_state.active_report_mode = "Машины в пути"
         st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
@@ -369,7 +368,7 @@ cols_no_finance = ['№ заявки', '№ счета', 'Дата счета', 
 # Проверяем, какой режим сейчас активен (если кнопка ещё не нажималась, ставим режим по умолчанию)
 current_mode = st.session_state.get("active_report_mode", "Поиск по Клиенту")
 
-if current_mode == "Машины в пути":
+if current_mode == "Авто в пути":
     show_replenishment_page()
     st.stop()
 
