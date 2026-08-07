@@ -321,7 +321,7 @@ def send_today_report_email(recipient_emails, target_sheets):
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6_new = st.columns(6)
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
 
