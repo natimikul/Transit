@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 
 def show_replenishment_page():
-    # Убрали текст "(Лист Пополн)"
     st.subheader("🚀 Авто в пути")
     
     # Ваша ссылка на веб-публикацию листа "Пополн"
@@ -27,13 +26,12 @@ def show_replenishment_page():
         return
 
     df['Дата отгрузки'] = df['Дата отгрузки'].fillna("-").astype(str).str.strip()
-    df['Страна'] = df['Страна'].fillna("Неизвестно").astype(str).str.strip()
+    df['Страna'] = df['Страна'] = df['Страна'].fillna("Неизвестно").astype(str).str.strip()
     df['Локация'] = df['Локация'].fillna("Не указана").astype(str).str.strip()
     df['Плановая дата прибытия'] = df['Плановая дата прибытия'].fillna("-").astype(str).str.strip()
     df['№ документа'] = df['№ документа'].fillna("").astype(str).str.strip()
     df['№ РКЗ'] = df['№ РКЗ'].fillna("").astype(str).str.strip()
 
-    # Убрали надпись "(Графа D)" из поля поиска
     search_query = st.text_input("🔍 Поиск авто по номеру документа:", "").strip()
 
     groupby_cols = ['Дата отгрузки', 'Страна', 'Локация', 'Плановая дата прибытия']
@@ -93,12 +91,11 @@ def show_replenishment_page():
             with doc_col1:
                 st.markdown(f"**📄 № документа ({len(docs_list)} шт.):**")
                 if docs_list:
-                    # Создаем одну общую строку из всех документов для быстрого копирования всей колонки
-                    all_docs_text = "\n".join(docs_list)
-                    with st.popover("📋 Скопировать весь список"):
-                        st.code(all_docs_text, language="")
+                    # Выпадающий список для копирования всей колонки сразу
+                    with st.expander("📋 Скопировать весь список документов"):
+                        st.code("\n".join(docs_list), language="")
                     
-                    st.markdown("---") # Визуальный разделитель
+                    # Основной список документов в столбик
                     for doc in docs_list:
                         st.code(doc, language="")
                 else:
@@ -107,12 +104,10 @@ def show_replenishment_page():
             with doc_col2:
                 st.markdown(f"**📑 № РКЗ ({len(rkz_list)} шт.):**")
                 if rkz_list:
-                    # Создаем одну общую строку из всех РКЗ для быстрого копирования всей колонки
-                    all_rkz_text = "\n".join(rkz_list)
-                    with st.popover("📋 Скопировать весь список"):
-                        st.code(all_rkz_text, language="")
+                    # Выпадающий список для копирования всей колонки РКЗ сразу
+                    with st.expander("📋 Скопировать весь список РКЗ"):
+                        st.code("\n".join(rkz_list), language="")
                         
-                    st.markdown("---") # Визуальный разделитель
                     for rkz in rkz_list:
                         st.code(rkz, language="")
                 else:
