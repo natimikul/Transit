@@ -5,7 +5,7 @@ def show_replenishment_page():
     st.subheader("🚚 Мониторинг автомобилей в пути (Лист Пополн)")
     
     # 1. Ссылка на веб-публикацию нового листа "Пополн"
-    POPOLN_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pubhtml?gid=60140824&single=true&output=csv"
+    POPOLN_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQy_3jRua5IiYZD1tk7nCWISLhn_IbFJIucGc0-hxR3Z3DNVpgr32WYwurNJZ-lnELLpicod-6wGIAD/pub?gid=60140824&single=true&output=csv"
     
     try:
         # on_bad_lines='skip' заставит код просто пропускать кривые строчки с лишними ячейками, не ломая сайт
