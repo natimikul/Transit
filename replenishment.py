@@ -26,7 +26,7 @@ def show_replenishment_page():
         return
 
     df['Дата отгрузки'] = df['Дата отгрузки'].fillna("-").astype(str).str.strip()
-    df['Страna'] = df['Страна'] = df['Страна'].fillna("Неизвестно").astype(str).str.strip()
+    df['Страна'] = df['Страна'].fillna("Неизвестно").astype(str).str.strip()
     df['Локация'] = df['Локация'].fillna("Не указана").astype(str).str.strip()
     df['Плановая дата прибытия'] = df['Плановая дата прибытия'].fillna("-").astype(str).str.strip()
     df['№ документа'] = df['№ документа'].fillna("").astype(str).str.strip()
@@ -89,29 +89,20 @@ def show_replenishment_page():
             doc_col1, doc_col2 = st.columns(2)
             
             with doc_col1:
-                st.markdown(f"**📄 № документа ({len(docs_list)} шт.):**")
                 if docs_list:
-                    # Выпадающий список для копирования всей колонки сразу
-                    with st.expander("📋 Скопировать весь список документов"):
+                    # Оставляем ТОЛЬКО выпадающий список. Внутри него — номера в столбик, готовые к копированию
+                    with st.expander(f"📋 № документа ({len(docs_list)} шт.)"):
                         st.code("\n".join(docs_list), language="")
-                    
-                    # Основной список документов в столбик
-                    for doc in docs_list:
-                        st.code(doc, language="")
                 else:
-                    st.write("*Нет данных*")
+                    st.caption("📄 *№ документа: Нет данных*")
                     
             with doc_col2:
-                st.markdown(f"**📑 № РКЗ ({len(rkz_list)} шт.):**")
                 if rkz_list:
-                    # Выпадающий список для копирования всей колонки РКЗ сразу
-                    with st.expander("📋 Скопировать весь список РКЗ"):
+                    # Оставляем ТОЛЬКО выпадающий список для РКЗ
+                    with st.expander(f"📑 № РКЗ ({len(rkz_list)} шт.)"):
                         st.code("\n".join(rkz_list), language="")
-                        
-                    for rkz in rkz_list:
-                        st.code(rkz, language="")
                 else:
-                    st.write("*Нет данных*")
+                    st.caption("📑 *№ РКЗ: Нет данных*")
 
     if search_query and cars_found == 0:
         st.warning(f"Машины с документом '{search_query}' не найдены.")
