@@ -31,11 +31,11 @@ if "authenticated" not in st.session_state:
         if st.button("Войти 🔑"):
             if user_password == CORRECT_PASSWORD:
                 st.session_state.authenticated = True
-                st.session_state.admin_pwd_sidebar = "" # Обычный пользователь
+                st.session_state.admin_status = "user" # Заменили тут
                 st.rerun()
-            elif user_password == "supersecret2026": # Секретный пароль админа
+            elif user_password == "supersecret2026":
                 st.session_state.authenticated = True
-                st.session_state.admin_pwd_sidebar = "supersecret2026" # Запоминаем админа в сессию
+                st.session_state.admin_status = "admin" # Заменили тут
                 st.rerun()
             else:
                 st.error("❌ Неверный пароль! Доступ заблокирован.")
