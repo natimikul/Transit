@@ -351,48 +351,47 @@ if is_admin:
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 
-# Если админ авторизован, создаем 7 колонок, иначе 6
 if is_admin:
-    cols = st.columns(7)
+    c1, c2, c3, c4_new, c4, c5, c6_admin = st.columns(7)
 else:
-    cols = st.columns(6)
+    c1, c2, c3, c4_new, c4, c5 = st.columns(6)
 
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
 
-with cols[0]:
+with c1:
     if st.button("🔵 Поиск по Клиенту"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм", "Отгрузки"]
         st.session_state.active_report_mode = "Поиск по Клиенту"
         st.rerun()
-with cols[1]:
+with c2:
     if st.button("📄 Разрешения"):
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Разрешения"
         st.rerun()
-with cols[2]:
+with c3:
     if st.button("🚚 Отгружено"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Отгружено"
         st.rerun()
-with cols[3]:
+with c4_new:
     if st.button("🚀 Авто в пути"):
         st.session_state.active_report_mode = "Авто в пути"
         st.rerun()
-with cols[4]:
+with c4:
     if st.button("🏢 Прибытие"):
         st.session_state.active_sheets = ["Алм"]
         st.session_state.active_report_mode = "Прибытие"
         st.rerun()
-with cols[5]:
+with c5:
     if st.button("🚛 Отгрузки Алматы"):
         st.session_state.active_sheets = ["Отгрузки"]
         st.session_state.active_report_mode = "Отгрузки Алматы"
         st.rerun()
-
-# Если зашел админ, добавляем 7-ю секретную кнопку
+        
+# Если зашел админ, выводим 7-ю кнопку в колонку c6_admin
 if is_admin:
-    with cols:
+    with c6_admin:
         if st.button("⚙️ Админ-панель"):
             st.session_state.active_report_mode = "Админ-панель"
             st.rerun()
