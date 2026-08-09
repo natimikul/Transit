@@ -34,16 +34,21 @@ CORRECT_PASSWORD = "Password123"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-if not st.session_state.authenticated:
-    st.subheader("🔒 Вход в систему")
-    user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
-    if st.button("Войти 🚀"):
-        if user_password == CORRECT_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("❌ Неверный пароль! Доступ заблокирован.")
-    st.stop()
+    if not st.session_state.authenticated:
+        st.subheader("🔒 Вход в систему")
+        user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
+        if st.button("Войти 🔑"):
+            if user_password == CORRECT_PASSWORD:
+                st.session_state.authenticated = True
+                st.session_state.admin_pwd_sidebar = "" # Обычный пользователь
+                st.rerun()
+            elif user_password == "supersecret2026": # Секретный пароль админа
+                st.session_state.authenticated = True
+                st.session_state.admin_pwd_sidebar = "supersecret2026" # Запоминаем админа в сессию
+                st.rerun()
+            else:
+                st.error("❌ Неверный пароль! Доступ заблокирован.")
+        st.stop()
 
 # --- 2. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
 sheet_urls = {
