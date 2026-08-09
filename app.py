@@ -16,7 +16,7 @@ from database import init_db, save_car_to_db, get_all_cars_from_db
 init_db()
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
-st.set_page_config(page_title="Система мониторинга", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Система мониторинга", layout="wide")
 st.title("📦 Система мониторинга статуса счетов")
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
@@ -319,9 +319,9 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
-# Вход в админку по секретному хвостику в ссылке сайта (?admin=yes)
+# Вход в админку по секретному хвостику в ссылке сайта (?admin=yes) или по паролю админа
 is_admin = False
-if "admin" in st.query_params and st.query_params["admin"] == "yes":
+if ("admin" in st.query_params and st.query_params["admin"] == "yes") or (st.session_state.get("admin_status") == "admin"):
     is_admin = True
     st.success("👑 Вы вошли как Администратор! Доступ к скрытым функциям открыт.")
 
