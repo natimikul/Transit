@@ -394,7 +394,7 @@ with cols[5]:
 
 # Если зашел админ, добавляем 7-ю секретную кнопку
 if is_admin:
-    with cols[6]:
+    with cols:
         if st.button("⚙️ Админ-панель"):
             st.session_state.active_report_mode = "Админ-панель"
             st.rerun()
