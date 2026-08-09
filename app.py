@@ -19,15 +19,6 @@ init_db()
 st.set_page_config(page_title="Система мониторинга", layout="wide", initial_sidebar_state="collapsed")
 st.title("📦 Система мониторинга статуса счетов")
 
-st.markdown("""
-<style>
-    div.stButton > button p {
-        font-size: 24px !important;
-        font-weight: bold !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
 CORRECT_PASSWORD = "Password123"
 
