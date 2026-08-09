@@ -10,6 +10,10 @@ import pandas as pd
 import datetime
 from io import BytesIO
 from replenishment import show_replenishment_page
+from database import init_db, save_car_to_db, get_all_cars_from_db
+
+# Инициализируем базу данных при старте
+init_db()
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
@@ -321,43 +325,52 @@ def send_today_report_email(recipient_emails, target_sheets):
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
-c1, c2, c3, c4_new, c4, c5 = st.columns(6)
+
+# Если админ авторизован, создаем 7 колонок, иначе 6
+if is_admin:
+    cols = st.columns(7)
+else:
+    cols = st.columns(6)
 
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
 
-with c1:
+with cols[0]:
     if st.button("🔵 Поиск по Клиенту"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр", "Алм", "Отгрузки"]
         st.session_state.active_report_mode = "Поиск по Клиенту"
         st.rerun()
-with c2:
+with cols[1]:
     if st.button("📄 Разрешения"):
         st.session_state.active_sheets = ["КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Разрешения"
         st.rerun()
-with c3:
+with cols[2]:
     if st.button("🚚 Отгружено"):
         st.session_state.active_sheets = ["Вну", "Бри-Дро", "КЗ разр", "РБ разр"]
         st.session_state.active_report_mode = "Отгружено"
         st.rerun()
-        
-# --- НАША ПЕРЕМЕЩЕННАЯ И СТИЛИЗОВАННАЯ КНОПКА ---
-with c4_new:
-    if st.button("🚀 Авто в пути"): # Заменили фиолетовый квадрат на ракету
+with cols[3]:
+    if st.button("🚀 Авто в пути"):
         st.session_state.active_report_mode = "Авто в пути"
         st.rerun()
-
-with c4:
+with cols[4]:
     if st.button("🏢 Прибытие"):
         st.session_state.active_sheets = ["Алм"]
         st.session_state.active_report_mode = "Прибытие"
         st.rerun()
-with c5:
+with cols[5]:
     if st.button("🚛 Отгрузки Алматы"):
         st.session_state.active_sheets = ["Отгрузки"]
         st.session_state.active_report_mode = "Отгрузки Алматы"
         st.rerun()
+
+# Если зашел админ, добавляем 7-ю секретную кнопку
+if is_admin:
+    with cols[6]:
+        if st.button("⚙️ Админ-панель"):
+            st.session_state.active_report_mode = "Админ-панель"
+            st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ С ПОДДЕРЖКОЙ ВЫДЕЛЕНИЯ И КОПИРОВАНИЯ ---
 # Если отчет еще не сформирован кнопками, собираем его автоматически по фильтрам из полей ввода
@@ -370,6 +383,33 @@ current_mode = st.session_state.get("active_report_mode", "Поиск по Кл�
 
 if current_mode == "Авто в пути":
     show_replenishment_page()
+    st.stop()
+if current_mode == "Админ-панель" and is_admin:
+    st.subheader("⚙️ Панель администратора: Управление базой SQLite")
+    
+    # Форма ручного добавления данных для проверки работы базы
+    with st.form("add_car_form"):
+        st.markdown("### ➕ Добавить новый рейс вручную")
+        f_date = st.text_input("Дата отгрузки (например, 29.07.2026):")
+        f_country = st.selectbox("Страна:", ["Беларусь", "Россия"])
+        f_loc = st.text_input("Локация авто:")
+        f_doc = st.text_area("№ документа (каждый с новой строки):")
+        f_rkz = st.text_area("№ РКЗ (каждый с новой строки):")
+        f_plan = st.text_input("Плановая дата прибытия:")
+        
+        submit = st.form_submit_button("Сохранить в SQLite")
+        if submit:
+            save_car_to_db(f_date, f_country, f_loc, f_doc, f_rkz, f_plan)
+            st.success("Данные успешно сохранены в локальную базу данных!")
+            
+    # Показываем, что сейчас лежит в базе данных
+    st.markdown("### 🗄️ Текущее содержимое базы SQLite:")
+    db_data = get_all_cars_from_db()
+    if db_data:
+        st.dataframe(pd.DataFrame(db_data, columns=['Дата отгрузки', 'Страна', 'Локация', '№ документа', '№ РКЗ', 'Плановая дата прибытия']))
+    else:
+        st.info("База данных пока пуста. Добавьте первую запись через форму выше.")
+        
     st.stop()
 
 if current_mode == "Поиск по Клиенту":
@@ -465,3 +505,13 @@ if st.session_state.get('show_email_modal', False):
                          st.success(f" Сводка успешно отправлена на адреса: {emails}")
                          st.session_state.show_email_modal = False
                          st.rerun()
+
+# --- СЕКРЕТНЫЙ ВХОД ДЛЯ АДМИНИСТРАТОРА ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔒 Доступ ограничен")
+admin_password = st.sidebar.text_input("Пароль администратора:", type="password")
+
+# Задайте свой секретный пароль вместо "supersecret2026"
+is_admin = (admin_password == "supersecret2026")
+if is_admin:
+    st.sidebar.success("Режим администратора активен!")
