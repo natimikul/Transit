@@ -15,6 +15,17 @@ from database import init_db, save_car_to_db, get_all_cars_from_db
 # Инициализируем базу данных при старте
 init_db()
 
+# Полностью скрываем пустую левую серую колонку (сайдбар) для всех пользователей
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {display: none !important;}
+        [data-testid="stSidebarCollapseButton"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_code=True
+)
+
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса счетов")
@@ -328,23 +339,11 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
-if "is_admin" not in locals() and "is_admin" not in globals():
-    is_admin = False
-    
-if is_admin:
-    st.success("Режим администратора активен!")
-
-# Связываем пароль из боковой панели с основным кодом
+# Вход в админку по секретному хвостику в ссылке сайта (?admin=yes)
 is_admin = False
-if "admin_password" in locals() or "admin_password" in globals():
-    is_admin = (admin_password == "supersecret2026")
-elif "admin_pwd_sidebar" in st.session_state:
-    is_admin = (st.session_state["admin_pwd_sidebar"] == "supersecret2026")
-
-# Закрываем доступ: теперь админом становится только тот, кто ввел правильный пароль
-is_admin = False
-if "admin_pwd_sidebar" in st.session_state and st.session_state["admin_pwd_sidebar"] == "supersecret2026":
+if "admin" in st.query_params and st.query_params["admin"] == "yes":
     is_admin = True
+    st.success("👑 Вы вошли как Администратор! Доступ к скрытым функциям открыт.")
 
 # Дополнительно выводим статус админа прямо по центру для проверки
 if is_admin:
