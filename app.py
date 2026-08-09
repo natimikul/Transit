@@ -329,6 +329,13 @@ if "is_admin" not in locals() and "is_admin" not in globals():
 if is_admin:
     st.success("Режим администратора активен!")
 
+# Связываем пароль из боковой панели с основным кодом
+is_admin = False
+if "admin_password" in locals() or "admin_password" in globals():
+    is_admin = (admin_password == "supersecret2026")
+elif "admin_pwd_sidebar" in st.session_state:
+    is_admin = (st.session_state["admin_pwd_sidebar"] == "supersecret2026")
+
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 
