@@ -341,8 +341,10 @@ if "admin_password" in locals() or "admin_password" in globals():
 elif "admin_pwd_sidebar" in st.session_state:
     is_admin = (st.session_state["admin_pwd_sidebar"] == "supersecret2026")
 
-# Временно включаем режим админа принудительно, чтобы проверить кнопку
-is_admin = True
+# Закрываем доступ: теперь админом становится только тот, кто ввел правильный пароль
+is_admin = False
+if "admin_pwd_sidebar" in st.session_state and st.session_state["admin_pwd_sidebar"] == "supersecret2026":
+    is_admin = True
 
 # Дополнительно выводим статус админа прямо по центру для проверки
 if is_admin:
