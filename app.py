@@ -323,6 +323,16 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
+if "is_admin" not in locals() and "is_admin" not in globals():
+    is_admin = False
+    
+# --- ПРОВЕРКА ПАРОЛЯ АДМИНИСТРАТОРА ---
+admin_password = st.text_input("Вход для администратора:", type="password", key="admin_pwd_main")
+is_admin = (admin_password == "supersecret2026")
+
+if is_admin:
+    st.success("Режим администратора активен!")
+
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 
