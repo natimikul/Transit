@@ -319,15 +319,10 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
-# Вход в админку по секретному хвостику в ссылке сайта (?admin=yes) или по паролю админа
+# Вход в админку по секретному хвостику в ссылке (?admin=yes) или по паролю
 is_admin = False
 if ("admin" in st.query_params and st.query_params["admin"] == "yes") or (st.session_state.get("admin_status") == "admin"):
     is_admin = True
-    st.success("👑 Вы вошли как Администратор! Доступ к скрытым функциям открыт.")
-
-# Дополнительно выводим статус админа прямо по центру для проверки
-if is_admin:
-    st.success("👑 Вы вошли как Администратор! Доступ к скрытым функциям открыт.")
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
@@ -510,13 +505,3 @@ if st.session_state.get('show_email_modal', False):
                          st.success(f" Сводка успешно отправлена на адреса: {emails}")
                          st.session_state.show_email_modal = False
                          st.rerun()
-
-# --- СЕКРЕТНЫЙ ВХОД ДЛЯ АДМИНИСТРАТОРА ---
-st.sidebar.markdown("---")
-admin_password = st.text_input("Пароль администратора:", type="password", key="admin_pwd_sidebar")
-
-# Задайте свой секретный пароль вместо "supersecret2026"
-is_admin = (admin_password == "supersecret2026")
-if is_admin:
-    st.sidebar.success("Режим администратора активен!")
-
