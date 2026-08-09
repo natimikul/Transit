@@ -15,17 +15,6 @@ from database import init_db, save_car_to_db, get_all_cars_from_db
 # Инициализируем базу данных при старте
 init_db()
 
-# Полностью скрываем пустую левую серую колонку (сайдбар) для всех пользователей
-st.markdown(
-    """
-    <style>
-        [data-testid="stSidebar"] {display: none !important;}
-        [data-testid="stSidebarCollapseButton"] {display: none !important;}
-    </style>
-    """,
-    unsafe_allow_code=True
-)
-
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Мониторинг счетов", layout="wide")
 st.title("📦 Система мониторинга статуса счетов")
@@ -539,3 +528,15 @@ admin_password = st.text_input("Пароль администратора:", typ
 is_admin = (admin_password == "supersecret2026")
 if is_admin:
     st.sidebar.success("Режим администратора активен!")
+
+# Перенесли в конец файла — скрываем серую колонку (сайдбар)
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {display: none !important;}
+        [data-testid="stSidebarCollapseButton"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_code=True
+)
+
