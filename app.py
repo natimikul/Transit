@@ -341,10 +341,14 @@ if "admin_password" in locals() or "admin_password" in globals():
 elif "admin_pwd_sidebar" in st.session_state:
     is_admin = (st.session_state["admin_pwd_sidebar"] == "supersecret2026")
 
-# Жестко проверяем пароль из сессии боковой панели
+# Окончательная и точная проверка статуса администратора
 is_admin = False
-if "admin_pwd_sidebar" in st.session_state:
-    is_admin = (st.session_state["admin_pwd_sidebar"] == "supersecret2026")
+if "admin_pwd_sidebar" in st.session_state and st.session_state["admin_pwd_sidebar"] == "supersecret2026":
+    is_admin = True
+
+# Дополнительно выводим статус админа прямо по центру для проверки
+if is_admin:
+    st.success("👑 Вы вошли как Администратор! Доступ к скрытым функциям открыт.")
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
@@ -531,7 +535,6 @@ if st.session_state.get('show_email_modal', False):
 
 # --- СЕКРЕТНЫЙ ВХОД ДЛЯ АДМИНИСТРАТОРА ---
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔒 Доступ ограничен")
 admin_password = st.text_input("Пароль администратора:", type="password", key="admin_pwd_sidebar")
 
 # Задайте свой секретный пароль вместо "supersecret2026"
