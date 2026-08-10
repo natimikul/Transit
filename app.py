@@ -439,14 +439,16 @@ if current_mode == "Админ-панель" and is_admin:
                     excel_df[5] = excel_df[5].apply(fix_encoding) # Статус 1С
                 if 7 in excel_df.columns:
                     excel_df[7] = excel_df[7].apply(fix_encoding) # Клиент
+                    
                 # --- УМНАЯ ФИЛЬТРАЦИЯ И ОПРЕДЕЛЕНИЕ СТРАН ---
-                # Создаем функцию, которая проверяет строку и возвращает для неё Склад и Страну
                 def Энциклопедия_Строки(row):
-                    row_text = " ".join(row.astype(str).lower())
+                    # Превращаем все элементы строки в список, убираем пустые ячейки и собираем в один текст нижнего регистра
+                    row_text = " ".join(row.dropna().astype(str).str.lower().tolist())
+                    
                     if "алматы" in row_text:
                         return None, None
                     
-                    # Если выбран конкретный склад, проверяем только его
+                    # Если выбран конкретный склад, проверяем только его наличие в тексте строки
                     if "Внуково" in upload_warehouse and "внуково" in row_text:
                         return "Внуково", "Россия"
                     elif "Брикета" in upload_warehouse and "брикета" in row_text:
@@ -454,7 +456,7 @@ if current_mode == "Админ-панель" and is_admin:
                     elif "Дроздово" in upload_warehouse and "дроздово" in row_text:
                         return "Дроздово", "Беларусь"
                     
-                    # Если выбраны "Все склады", автоматически ищем любой из трех допустимых
+                    # Если выбраны "Все склады", автоматически распределяем по маркерам
                     elif "Все склады" in upload_warehouse:
                         if "внуково" in row_text:
                             return "Внуково", "Россия"
