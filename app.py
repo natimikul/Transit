@@ -263,8 +263,9 @@ def send_today_report_email(recipient_emails, target_sheets):
     try:
         smtp_server =  "smtp.gmail.com"   # например: smtp.yandex.ru или smtp.mail.ru
         smtp_port = 465      # обычно 465 (для SSL) или 587 (для TLS)
-        sender_email = "natimikul@gmail.com"       # ваш технический ящик отправки
-        sender_password = "cekg mswv wfbd efmk" # специальный пароль приложения (не от личного кабинета!)
+        sender_email = st.secrets["email"]["sender_email"]
+        sender_password = st.secrets["email"]["sender_password"]
+
     except Exception:
         st.error("Ошибка конфигурации! На Streamlit Cloud не настроены параметры почты в st.secrets.")
         return False
