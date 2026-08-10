@@ -213,10 +213,6 @@ def build_report(target_sheets, required_columns, filter_by_client=True, allowed
 
 # --- ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ И ОТПРАВКИ СВОДКИ НА EMAIL ---
 def send_today_report_email(recipient_emails, target_sheets):
-    """
-    Собирает данные за сегодня со всех активных листов,
-    формирует Excel и отправляет на указанные email-адреса.
-    """
     sender_email = st.secrets["email"]["sender_email"]
     sender_password = st.secrets["email"]["sender_password"]
 
