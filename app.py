@@ -391,7 +391,7 @@ if current_mode == "Админ-панель" and is_admin:
     
     upload_warehouse = st.selectbox(
         "Укажите склад отправления для загружаемого файла:",
-        ["Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
+        ["Все склады вместе (Внуково, Брикета, Дроздово)", "Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
     )
     
     # Объявляем переменную здесь, чтобы она гарантированно существовала
@@ -439,6 +439,56 @@ if current_mode == "Админ-панель" and is_admin:
                     excel_df[5] = excel_df[5].apply(fix_encoding) # Статус 1С
                 if 7 in excel_df.columns:
                     excel_df[7] = excel_df[7].apply(fix_encoding) # Клиент
+                # --- УМНАЯ ФИЛЬТРАЦИЯ И ОПРЕДЕЛЕНИЕ СТРАН ---
+                # Создаем функцию, которая проверяет строку и возвращает для неё Склад и Страну
+                def Энциклопедия_Строки(row):
+                    row_text = " ".join(row.astype(str).lower())
+                    if "алматы" in row_text:
+                        return None, None
+                    
+                    # Если выбран конкретный склад, проверяем только его
+                    if "Внуково" in upload_warehouse and "внуково" in row_text:
+                        return "Внуково", "Россия"
+                    elif "Брикета" in upload_warehouse and "брикета" in row_text:
+                        return "Брикета", "Беларусь"
+                    elif "Дроздово" in upload_warehouse and "дроздово" in row_text:
+                        return "Дроздово", "Беларусь"
+                    
+                    # Если выбраны "Все склады", автоматически ищем любой из трех допустимых
+                    elif "Все склады" in upload_warehouse:
+                        if "внуково" in row_text:
+                            return "Внуково", "Россия"
+                        elif "брикета" in row_text:
+                            return "Брикета", "Беларусь"
+                        elif "дроздово" in row_text:
+                            return "Дроздово", "Беларусь"
+                    
+                    return None, None
+
+                # Применяем анализ к каждой строке
+                warehouse_and_country = excel_df.apply(Энциклопедия_Строки, axis=1)
+                
+                # Создаем в нашей таблице две новые служебные колонки для базы данных
+                excel_df['Системный_Склад'] = [item[0] for item in warehouse_and_country]
+                excel_df['Системная_Страна'] = [item[1] for item in warehouse_and_country]
+                
+                # Отбрасываем строки, которые не подошли ни под один склад (включая Алматы)
+                excel_df = excel_df[excel_df['Системный_Склад'].notna()].reset_index(drop=True)
+                
+                total_rows = len(excel_df)
+                st.success(f"📋 Файл успешно отфильтрован! Оставлено целевых счетов: {total_rows}")
+                
+                # Выводим красивую сводку, какие склады нашлись в файле
+                if "Все склады" in upload_warehouse:
+                    st.info("📊 **Распределение по складам внутри файла (Игнорируя Алматы):**")
+                    for wh in ["Внуково", "Брикета", "Дроздово"]:
+                        count_wh = len(excel_df[excel_df['Системный_Склад'] == wh])
+                        flag = "🇷🇺" if wh == "Внуково" else "🇧🇾"
+                        if count_wh > 0:
+                            st.write(f"{flag} Склад **{wh}**: {count_wh} счетов")
+                else:
+                    flag_sys = "🇷🇺" if "Внуково" in upload_warehouse else "🇧🇾"
+                    st.info(f"📍 Оставлен только склад: **{upload_warehouse}** | Страна: {flag_sys}")
                 
                 total_rows = len(excel_df)
                 st.success(f"📋 Файл успешно прочитан и нормализован! Обнаружено счетов: {total_rows}")
