@@ -402,14 +402,14 @@ if current_mode == "Админ-панель" and is_admin:
             excel_df = pd.read_excel(uploaded_excel, header=None)
             excel_df = excel_df.dropna(how='all').reset_index(drop=True)
             
-            if not excel_df.empty:
-header_idx = 0
-for i in range(min(5, len(excel_df))):
-    # Правильно превращаем всю строку в список нижнего регистра и объединяем в текст
-    row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
-    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
-        header_idx = i
-        break
+if not excel_df.empty:
+    header_idx = 0
+    for i in range(min(5, len(excel_df))):
+        # Правильно превращаем всю строку в список нижнего регистра и объединяем в текст
+        row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
+        if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
+            header_idx = i
+            break
                 
                 excel_df.columns = excel_df.iloc[header_idx]
                 excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
