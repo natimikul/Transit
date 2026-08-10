@@ -384,6 +384,7 @@ current_mode = st.session_state.get("active_report_mode", "Поиск по Кл�
 if current_mode == "Авто в пути":
     show_replenishment_page()
     st.stop()
+if current_mode == "Админ-панель" and is_admin:
 
     if uploaded_excel is not None:
         try:
