@@ -399,27 +399,31 @@ if current_mode == "Админ-панель" and is_admin:
     
     if uploaded_excel is not None:
         try:
+            # Читаем Excel файл без заголовков
             excel_df = pd.read_excel(uploaded_excel, header=None)
             excel_df = excel_df.dropna(how='all').reset_index(drop=True)
             
-if not excel_df.empty:
-    header_idx = 0
-    for i in range(min(5, len(excel_df))):
-        # Правильно превращаем всю строку в список нижнего регистра и объединяем в текст
-        row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
-        if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
-            header_idx = i
-            break
+            if not excel_df.empty:
+                # Находим реальную строчку заголовка (где есть ключевые слова)
+                header_idx = 0
+                for i in range(min(5, len(excel_df))):
+                    row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
+                    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
+                        header_idx = i
+                        break
                 
+                # Пересобираем датафрейм с правильными заголовками
                 excel_df.columns = excel_df.iloc[header_idx]
                 excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
                 
-                # Принудительно индексируем колонки цифрами от 1 для сопоставления со скриншотом
+                # Принудительно индексируем колонки цифрами от 1 для точного совпадения
                 excel_df.columns = list(range(1, len(excel_df.columns) + 1))
                 
                 # Фильтруем пустые строки по номеру документа (Колонка 1)
-                excel_df = excel_df[excel_df[1].notna() & (excel_df[1].astype(str).str.strip() != "")]
+                if 1 in excel_df.columns:
+                    excel_df = excel_df[excel_df[1].notna() & (excel_df[1].astype(str).str.strip() != "")]
                 
+                # Функция для автоматического исправления кодировки 1С
                 def fix_encoding(text):
                     if pd.isna(text): return ""
                     t_str = str(text).strip()
@@ -428,15 +432,18 @@ if not excel_df.empty:
                     except:
                         return t_str
 
-               # Исправляем текст в критически важных колонках
-excel_df[3] = excel_df[3].astype(str).apply(fix_encoding) # Рейс
-excel_df[5] = excel_df[5].astype(str).apply(fix_encoding) # Статус 1С
-excel_df[7] = excel_df[7].astype(str).apply(fix_encoding) # Клиент
-
+                # Исправляем текст в критически важных колонках, если они существуют
+                if 3 in excel_df.columns:
+                    excel_df[3] = excel_df[3].apply(fix_encoding) # Рейс
+                if 5 in excel_df.columns:
+                    excel_df[5] = excel_df[5].apply(fix_encoding) # Статус 1С
+                if 7 in excel_df.columns:
+                    excel_df[7] = excel_df[7].apply(fix_encoding) # Клиент
                 
                 total_rows = len(excel_df)
                 st.success(f"📋 Файл успешно прочитан и нормализован! Обнаружено счетов: {total_rows}")
                 
+                # Автоматически определяем страну
                 if "Внуково" in upload_warehouse:
                     detected_country = "Россия"
                     flag_sys = "🇷🇺"
@@ -449,25 +456,30 @@ excel_df[7] = excel_df[7].astype(str).apply(fix_encoding) # Клиент
                 st.markdown("---")
                 st.markdown("### 📊 2. Автоматическое распределение данных из файла")
                 
-                st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
-                statuses_1c = excel_df[5].unique()
-                for stat_1c in statuses_1c:
-                    if stat_1c:
+                # Группировка по статусу из 1С (Колонка 5)
+                if 5 in excel_df.columns:
+                    st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
+                    excel_df[5] = excel_df[5].replace("", "Не указан")
+                    statuses_1c = excel_df[5].drop_duplicates().tolist()
+                    for stat_1c in statuses_1c:
                         sub_df_stat = excel_df[excel_df[5] == stat_1c]
                         st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
                 
-                st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
-                excel_df[3] = excel_df[3].replace("", "БЕЗ РЕЙСА")
-                excel_df[4] = excel_df[4].fillna("-").astype(str).str.strip()
+                # Группировка по рейсам и датам рейса (Колонки 3 и 4)
+                if 3 in excel_df.columns and 4 in excel_df.columns:
+                    st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
+                    excel_df[3] = excel_df[3].replace("", "БЕЗ РЕЙСА").fillna("БЕЗ РЕЙСА")
+                    excel_df[4] = excel_df[4].fillna("-").astype(str).str.strip()
+                    
+                    unique_excel_trips = excel_df[[3, 4]].drop_duplicates()
+                    
+                    for _, trip in unique_excel_trips.iterrows():
+                        trip_name = trip[3]
+                        trip_date = trip[4]
+                        trip_rows = excel_df[(excel_df[3] == trip_name) & (excel_df[4] == trip_date)]
+                        st.write(f"🚢 Рейс: `{trip_name}` от `{trip_date}` — **{len(trip_rows)} счетов**")
                 
-                unique_excel_trips = excel_df[[3, 4]].drop_duplicates()
-                
-                for _, trip in unique_excel_trips.iterrows():
-                    trip_name = trip[3]
-                    trip_date = trip[4]
-                    trip_rows = excel_df[(excel_df[3] == trip_name) & (excel_df[4] == trip_date)]
-                    st.write(f"🚢 Рейс: `{trip_name}` от `{trip_date}` — **{len(trip_rows)} счетов**")
-                
+                # БЛОК ИНСТРУМЕНТОВ ЛОГИСТА
                 st.markdown("---")
                 st.markdown("### 🛠️ 3. Инструменты группировки и логистики")
                 
@@ -480,10 +492,11 @@ excel_df[7] = excel_df[7].astype(str).apply(fix_encoding) # Клиент
                     )
                     need_perm = st.checkbox("Требуется разрешение (Признак заключения)", value=False)
                 with col_l2:
-                    first_trip_date = unique_excel_trips.iloc[0, 1] if not unique_excel_trips.empty else ""
-                    first_trip_name = unique_excel_trips.iloc[0, 0] if not unique_excel_trips.empty else ""
-                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(unique_excel_trips.iloc[0][1]))
-                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(unique_excel_trips.iloc[0][0]))
+                    has_trips = (3 in excel_df.columns and 4 in excel_df.columns and not unique_excel_trips.empty)
+                    first_trip_date = unique_excel_trips.iloc[0, 1] if has_trips else ""
+                    first_trip_name = unique_excel_trips.iloc[0, 0] if has_trips else ""
+                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(first_trip_date))
+                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(first_trip_name))
                 
                 if st.button("💾 Распределить и сохранить счета в SQLite базу данных"):
                     st.balloons()
