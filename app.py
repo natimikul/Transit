@@ -403,12 +403,13 @@ if current_mode == "Админ-панель" and is_admin:
             excel_df = excel_df.dropna(how='all').reset_index(drop=True)
             
             if not excel_df.empty:
-                header_idx = 0
-                for i in range(min(5, len(excel_df))):
-                    row_str = " ".join(excel_df.iloc[i].astype(str).lower())
-                    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
-                        header_idx = i
-                        break
+header_idx = 0
+for i in range(min(5, len(excel_df))):
+    # Правильно превращаем всю строку в список нижнего регистра и объединяем в текст
+    row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
+    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
+        header_idx = i
+        break
                 
                 excel_df.columns = excel_df.iloc[header_idx]
                 excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
@@ -427,10 +428,11 @@ if current_mode == "Админ-панель" and is_admin:
                     except:
                         return t_str
 
-                # Исправляем текст в критически важных колонках
-                excel_df[3] = excel_df[3].apply(fix_encoding) # Рейс
-                excel_df[5] = excel_df[5].apply(fix_encoding) # Статус 1С
-                excel_df[7] = excel_df[7].apply(fix_encoding) # Клиент
+               # Исправляем текст в критически важных колонках
+excel_df[3] = excel_df[3].astype(str).apply(fix_encoding) # Рейс
+excel_df[5] = excel_df[5].astype(str).apply(fix_encoding) # Статус 1С
+excel_df[7] = excel_df[7].astype(str).apply(fix_encoding) # Клиент
+
                 
                 total_rows = len(excel_df)
                 st.success(f"📋 Файл успешно прочитан и нормализован! Обнаружено счетов: {total_rows}")
@@ -480,8 +482,8 @@ if current_mode == "Админ-панель" and is_admin:
                 with col_l2:
                     first_trip_date = unique_excel_trips.iloc[0, 1] if not unique_excel_trips.empty else ""
                     first_trip_name = unique_excel_trips.iloc[0, 0] if not unique_excel_trips.empty else ""
-                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(first_trip_date))
-                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(first_trip_name))
+                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(unique_excel_trips.iloc[0][1]))
+                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(unique_excel_trips.iloc[0][0]))
                 
                 if st.button("💾 Распределить и сохранить счета в SQLite базу данных"):
                     st.balloons()
