@@ -20,26 +20,27 @@ st.set_page_config(page_title="Система мониторинга", layout="w
 st.title("📦 Система мониторинга статуса счетов")
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ ---
-CORRECT_PASSWORD = "Password123"
+CORRECT_PASSWORD = st.secrets["auth"]["user_password"]
+ADMIN_PASSWORD = st.secrets["auth"]["admin_password"]
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-    if not st.session_state.authenticated:
-        st.subheader("🔒 Вход в систему")
-        user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
-        if st.button("Войти 🔑"):
-            if user_password == CORRECT_PASSWORD:
-                st.session_state.authenticated = True
-                st.session_state.admin_status = "user" # Заменили тут
-                st.rerun()
-            elif user_password == "supersecret2026":
-                st.session_state.authenticated = True
-                st.session_state.admin_status = "admin" # Заменили тут
-                st.rerun()
-            else:
-                st.error("❌ Неверный пароль! Доступ заблокирован.")
-        st.stop()
+if not st.session_state.authenticated:
+    st.subheader("🔒 Вход в систему")
+    user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
+    if st.button("Войти 🔑"):
+        if user_password == CORRECT_PASSWORD:
+            st.session_state.authenticated = True
+            st.session_state.admin_status = "user"
+            st.rerun()
+        elif user_password == ADMIN_PASSWORD:
+            st.session_state.authenticated = True
+            st.session_state.admin_status = "admin"
+            st.rerun()
+        else:
+            st.error("❌ Неверный пароль! Доступ заблокирован.")
+    st.stop()
 
 # --- 2. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
 sheet_urls = {
