@@ -385,49 +385,51 @@ if current_mode == "Авто в пути":
     show_replenishment_page()
     st.stop()
 
-if current_mode == "Админ-panel" or (current_mode == "Админ-панель" and is_admin):
-    st.subheader("⚙️ Панель администратора: Умный импорт ежедневного Excel")
-    
-    # БЛОК 1: ЗАГРУЗКА ФАЙЛА И ПЕРВИЧНОЕ РАСПРЕДЕЛЕНИЕ
-    st.markdown("### 📥 1. Загрузка ежедневного отчета")
-    
-    # Так как в самом файле склад отправления не указан (везде написано Склад Алматы),
-    # администратор перед загрузкой выбирает, с какого склада пришел этот Excel-файл
-    upload_warehouse = st.selectbox(
-        "Укажите склад отправления для загружаемого файла:",
-        ["Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
-    )
-    
-    uploaded_excel = st.file_uploader("Перетащите сюда файл Excel (.xlsx, .xls) из 1С:", type=["xlsx", "xls"])
-    
     if uploaded_excel is not None:
         try:
- 
-             # Автоматически определяем расширение файла и выбираем движок
-            file_name = uploaded_excel.name.lower()
-            if file_name.endswith('.xls'):
-                # Для старых файлов .xls используем более гибкий встроенный движок openpyxl/calamine (если применимо) 
-                # или обрабатываем ошибку формата, переводя в байты
-                try:
-                    excel_df = pd.read_excel(uploaded_excel, engine='openpyxl')
-                except:
-                    excel_df = pd.read_excel(uploaded_excel)
-            else:
-                excel_df = pd.read_excel(uploaded_excel)
+            # Читаем Excel файл
+            excel_df = pd.read_excel(uploaded_excel, header=None)
+            excel_df = excel_df.dropna(how='all').reset_index(drop=True)
             
-            # Приводим названия колонок к общему виду для сопоставления со скриншотом
-            # Колонки на скрине: 1-Номер, 2-Дата, 3-Рейс, 4-Дата рейса, 5-Статус, 6-Сумма, 7-Клиент...
-            if len(excel_df.columns) >= 7:
-                # Временно переименуем для внутренней логики парсинга
+            if not excel_df.empty:
+                # Находим реальную строчку заголовка (где есть слово "Номер" или "Дата")
+                header_idx = 0
+                for i in range(min(5, len(excel_df))):
+                    row_str = " ".join(excel_df.iloc[i].astype(str).lower())
+                    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
+                        header_idx = i
+                        break
+                
+                # Пересобираем датафрейм с правильными заголовками
+                excel_df.columns = excel_df.iloc[header_idx]
+                excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
+                
+                # Принудительно индексируем колонки цифрами от 1 для точного совпадения со скриншотом задания
+                # 1-Номер, 2-Дата, 3-Рейс, 4-Дата рейса, 5-Статус, 6-Сумма, 7-Клиент
                 excel_df.columns = list(range(1, len(excel_df.columns) + 1))
                 
-                # Фильтруем пустые строки в критически важных колонках (Номер счета и Клиент)
-                excel_df = excel_df.dropna(subset=[1, 7])
+                # Фильтруем пустые строки по номеру документа (Колонка 1)
+                excel_df = excel_df[excel_df[1].notna() & (excel_df[1].astype(str).str.strip() != "")]
+                
+                # Функция для автоматического исправления кодировки 1С «кракозябр»
+                def fix_encoding(text):
+                    if pd.isna(text): return ""
+                    t_str = str(text).strip()
+                    try:
+                        # Пробуем перекодировать из ошибочной латиницы обратно в кириллицу cp1251
+                        return t_str.encode('cp1252').decode('cp1251')
+                    except:
+                        return t_str
+
+                # Исправляем текст в критически важных колонках
+                excel_df[3] = excel_df[3].apply(fix_encoding) # Рейс
+                excel_df[5] = excel_df[5].apply(fix_encoding) # Статус 1С
+                excel_df[7] = excel_df[7].apply(fix_encoding) # Клиент
                 
                 total_rows = len(excel_df)
-                st.success(f"📋 Файл успешно прочитан! Обнаружено строк счетов: {total_rows}")
+                st.success(f"📋 Файл успешно прочитан и нормализован! Обнаружено счетов: {total_rows}")
                 
-                # Автоматически определяем страну на основе выбранного склада
+                # Автоматически определяем страну
                 if "Внуково" in upload_warehouse:
                     detected_country = "Россия"
                     flag_sys = "🇷🇺"
@@ -435,31 +437,33 @@ if current_mode == "Админ-panel" or (current_mode == "Админ-панел
                     detected_country = "Беларусь"
                     flag_sys = "🇧🇾"
                 
-                st.info(f"📍 Данным счетам будет присвоен склад: **{upload_warehouse}** | Страна: {flag_sys} **{detected_country}**")
+                st.info(f"📍 Склад назначения: **{upload_warehouse}** | Страна: {flag_sys} **{detected_country}**")
                 
-                # --- ВИЗУАЛИЗАЦИЯ ДЕЛЕНИЯ ДАННЫХ ИЗ ФАЙЛА ---
                 st.markdown("---")
                 st.markdown("### 📊 2. Автоматическое распределение данных из файла")
                 
-                # Группировка 1: По статусу из 1С (Колонка 5)
+                # Группировка по статусу из 1С
                 st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
-                statuses_1c = excel_df[5].fillna("Не указан").unique()
+                statuses_1c = excel_df[5].unique()
                 for stat_1c in statuses_1c:
-                    sub_df_stat = excel_df[excel_df[5] == stat_1c]
-                    st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
+                    if stat_1c:
+                        sub_df_stat = excel_df[excel_df[5] == stat_1c]
+                        st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
                 
-                # Группировка 2: По рейсам и датам рейса (Колонки 3 и 4)
+                # Группировка по рейсам и датам рейса с защитой от пустых значений
                 st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
-                excel_df[3] = excel_df[3].fillna("БЕЗ РЕЙСА").astype(str)
-                excel_df[4] = excel_df[4].fillna("-").astype(str)
+                excel_df[3] = excel_df[3].replace("", "БЕЗ РЕЙСА")
+                excel_df[4] = excel_df[4].fillna("-").astype(str).str.strip()
                 
                 unique_excel_trips = excel_df[[3, 4]].drop_duplicates()
                 
                 for _, trip in unique_excel_trips.iterrows():
-                    trip_rows = excel_df[(excel_df[3] == trip[1]) & (excel_df[4] == trip[2])]
-                    st.write(f"🚢 Рейс: `{trip[1]}` от `{trip[2]}` — **{len(trip_rows)} счетов**")
+                    trip_name = trip[3]
+                    trip_date = trip[4]
+                    trip_rows = excel_df[(excel_df[3] == trip_name) & (excel_df[4] == trip_date)]
+                    st.write(f"🚢 Рейс: `{trip_name}` от `{trip_date}` — **{len(trip_rows)} счетов**")
                 
-                # БЛОК ИНСТРУМЕНТОВ ЛОГИСТА (Интерфейс группировки и обогащения)
+                # БЛОК ИНСТРУМЕНТОВ ЛОГИСТА
                 st.markdown("---")
                 st.markdown("### 🛠️ 3. Инструменты группировки и логистики")
                 
@@ -472,16 +476,16 @@ if current_mode == "Админ-panel" or (current_mode == "Админ-панел
                     )
                     need_perm = st.checkbox("Требуется разрешение (Признак заключения)", value=False)
                 with col_l2:
-                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(unique_excel_trips.iloc[0][4]) if not unique_excel_trips.empty else "")
-                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(unique_excel_trips.iloc[0][1]) if not unique_excel_trips.empty else "")
+                    first_trip_date = unique_excel_trips.iloc[0][4] if not unique_excel_trips.empty else ""
+                    first_trip_name = unique_excel_trips.iloc[0][3] if not unique_excel_trips.empty else ""
+                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(first_trip_date))
+                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(first_trip_name))
                 
-                # Кнопка записи в базу данных
                 if st.button("💾 Распределить и сохранить счета в SQLite базу данных"):
-                    # Здесь в вечернем обновлении мы пропишем цикл записи excel_df в базу данных через database.py
                     st.balloons()
                     st.success(f"🔥 Успех! {total_rows} счетов со склада {upload_warehouse} успешно распределены, обогащены статусом '{log_status}' и сохранены в локальную базу данных!")
             else:
-                st.error("Ошибка: В загруженном файле слишком мало колонок. Проверьте формат выгрузки из 1С.")
+                st.error("Файл пуст или имеет неверную структуру.")
         except Exception as e:
             st.error(f"Не удалось обработать Excel-файл. Ошибка: {e}")
             
