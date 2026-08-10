@@ -402,8 +402,18 @@ if current_mode == "Админ-panel" or (current_mode == "Админ-панел
     
     if uploaded_excel is not None:
         try:
-            # Читаем Excel файл
-            excel_df = pd.read_excel(uploaded_excel)
+ 
+             # Автоматически определяем расширение файла и выбираем движок
+            file_name = uploaded_excel.name.lower()
+            if file_name.endswith('.xls'):
+                # Для старых файлов .xls используем более гибкий встроенный движок openpyxl/calamine (если применимо) 
+                # или обрабатываем ошибку формата, переводя в байты
+                try:
+                    excel_df = pd.read_excel(uploaded_excel, engine='openpyxl')
+                except:
+                    excel_df = pd.read_excel(uploaded_excel)
+            else:
+                excel_df = pd.read_excel(uploaded_excel)
             
             # Приводим названия колонок к общему виду для сопоставления со скриншотом
             # Колонки на скрине: 1-Номер, 2-Дата, 3-Рейс, 4-Дата рейса, 5-Статус, 6-Сумма, 7-Клиент...
