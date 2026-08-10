@@ -7,17 +7,22 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Таблица для хранения информации об автомобилях из листа Пополн
+    # Расширенная таблица для хранения информации по счетам из ежедневного Excel
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS auto_in_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dispatch_date TEXT,          -- Дата отгрузки
-            country TEXT,                -- Страна
-            location TEXT,               -- Локация авто
-            doc_number TEXT,             -- № документа (графа D)
-            rkz_number TEXT,             -- № РКЗ (графа E)
+            dispatch_date TEXT,          -- Дата отгрузки / Дата рейса
+            country TEXT,                -- Страна (Россия/Беларусь)
+            location TEXT,               -- Локация / Склад отправления
+            doc_number TEXT,             -- № документа (Колонка 1)
+            rkz_number TEXT,             -- № РКЗ / Доп. инфо
             estimated_arrival TEXT,      -- Плановая дата прибытия
-            added_by TEXT,               -- Кто добавил (для контроля)
+            status_1c TEXT,              -- Статус из 1С (Колонка 5)
+            log_status TEXT,             -- Статус логистики (Создан, В сборке, В пути...)
+            client TEXT,                 -- Клиент (Колонка 7)
+            trip_name TEXT,              -- Рейс (Колонка 3)
+            order_number TEXT,           -- Номер заказа (Колонка 11)
+            added_by TEXT,               -- Кто добавил
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -30,8 +35,8 @@ def save_car_to_db(dispatch_date, country, location, doc_number, rkz_number, est
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO auto_in_transit (dispatch_date, country, location, doc_number, rkz_number, estimated_arrival, added_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO auto_in_transit (dispatch_date, country, location, doc_number, rkz_number, estimated_arrival, added_by, log_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Создан')
     ''', (dispatch_date, country, location, doc_number, rkz_number, estimated_arrival, user))
     conn.commit()
     conn.close()
