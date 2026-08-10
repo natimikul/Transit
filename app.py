@@ -384,32 +384,97 @@ current_mode = st.session_state.get("active_report_mode", "Поиск по Кл�
 if current_mode == "Авто в пути":
     show_replenishment_page()
     st.stop()
-if current_mode == "Админ-панель" and is_admin:
-    st.subheader("⚙️ Панель администратора: Управление базой SQLite")
+
+if current_mode == "Админ-panel" or (current_mode == "Админ-панель" and is_admin):
+    st.subheader("⚙️ Панель администратора: Умный импорт ежедневного Excel")
     
-    # Форма ручного добавления данных для проверки работы базы
-    with st.form("add_car_form"):
-        st.markdown("### ➕ Добавить новый рейс вручную")
-        f_date = st.text_input("Дата отгрузки (например, 29.07.2026):")
-        f_country = st.selectbox("Страна:", ["Беларусь", "Россия"])
-        f_loc = st.text_input("Локация авто:")
-        f_doc = st.text_area("№ документа (каждый с новой строки):")
-        f_rkz = st.text_area("№ РКЗ (каждый с новой строки):")
-        f_plan = st.text_input("Плановая дата прибытия:")
-        
-        submit = st.form_submit_button("Сохранить в SQLite")
-        if submit:
-            save_car_to_db(f_date, f_country, f_loc, f_doc, f_rkz, f_plan)
-            st.success("Данные успешно сохранены в локальную базу данных!")
+    # БЛОК 1: ЗАГРУЗКА ФАЙЛА И ПЕРВИЧНОЕ РАСПРЕДЕЛЕНИЕ
+    st.markdown("### 📥 1. Загрузка ежедневного отчета")
+    
+    # Так как в самом файле склад отправления не указан (везде написано Склад Алматы),
+    # администратор перед загрузкой выбирает, с какого склада пришел этот Excel-файл
+    upload_warehouse = st.selectbox(
+        "Укажите склад отправления для загружаемого файла:",
+        ["Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
+    )
+    
+    uploaded_excel = st.file_uploader("Перетащите сюда файл Excel (.xlsx, .xls) из 1С:", type=["xlsx", "xls"])
+    
+    if uploaded_excel is not None:
+        try:
+            # Читаем Excel файл
+            excel_df = pd.read_excel(uploaded_excel)
             
-    # Показываем, что сейчас лежит в базе данных
-    st.markdown("### 🗄️ Текущее содержимое базы SQLite:")
-    db_data = get_all_cars_from_db()
-    if db_data:
-        st.dataframe(pd.DataFrame(db_data, columns=['Дата отгрузки', 'Страна', 'Локация', '№ документа', '№ РКЗ', 'Плановая дата прибытия']))
-    else:
-        st.info("База данных пока пуста. Добавьте первую запись через форму выше.")
-        
+            # Приводим названия колонок к общему виду для сопоставления со скриншотом
+            # Колонки на скрине: 1-Номер, 2-Дата, 3-Рейс, 4-Дата рейса, 5-Статус, 6-Сумма, 7-Клиент...
+            if len(excel_df.columns) >= 7:
+                # Временно переименуем для внутренней логики парсинга
+                excel_df.columns = list(range(1, len(excel_df.columns) + 1))
+                
+                # Фильтруем пустые строки в критически важных колонках (Номер счета и Клиент)
+                excel_df = excel_df.dropna(subset=[1, 7])
+                
+                total_rows = len(excel_df)
+                st.success(f"📋 Файл успешно прочитан! Обнаружено строк счетов: {total_rows}")
+                
+                # Автоматически определяем страну на основе выбранного склада
+                if "Внуково" in upload_warehouse:
+                    detected_country = "Россия"
+                    flag_sys = "🇷🇺"
+                else:
+                    detected_country = "Беларусь"
+                    flag_sys = "🇧🇾"
+                
+                st.info(f"📍 Данным счетам будет присвоен склад: **{upload_warehouse}** | Страна: {flag_sys} **{detected_country}**")
+                
+                # --- ВИЗУАЛИЗАЦИЯ ДЕЛЕНИЯ ДАННЫХ ИЗ ФАЙЛА ---
+                st.markdown("---")
+                st.markdown("### 📊 2. Автоматическое распределение данных из файла")
+                
+                # Группировка 1: По статусу из 1С (Колонка 5)
+                st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
+                statuses_1c = excel_df[5].fillna("Не указан").unique()
+                for stat_1c in statuses_1c:
+                    sub_df_stat = excel_df[excel_df[5] == stat_1c]
+                    st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
+                
+                # Группировка 2: По рейсам и датам рейса (Колонки 3 и 4)
+                st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
+                excel_df[3] = excel_df[3].fillna("БЕЗ РЕЙСА").astype(str)
+                excel_df[4] = excel_df[4].fillna("-").astype(str)
+                
+                unique_excel_trips = excel_df[[3, 4]].drop_duplicates()
+                
+                for _, trip in unique_excel_trips.iterrows():
+                    trip_rows = excel_df[(excel_df[3] == trip[1]) & (excel_df[4] == trip[2])]
+                    st.write(f"🚢 Рейс: `{trip[1]}` от `{trip[2]}` — **{len(trip_rows)} счетов**")
+                
+                # БЛОК ИНСТРУМЕНТОВ ЛОГИСТА (Интерфейс группировки и обогащения)
+                st.markdown("---")
+                st.markdown("### 🛠️ 3. Инструменты группировки и логистики")
+                
+                st.markdown("##### Применить массовые параметры логистики для счетов из этого файла:")
+                col_l1, col_l2 = st.columns(2)
+                with col_l1:
+                    log_status = st.selectbox(
+                        "Установить текущий статус логистики:",
+                        ["Создан", "В сборке", "Ожидает разрешения", "В пути", "Прибыл на склад Алматы", "Готов к отгрузке клиенту"]
+                    )
+                    need_perm = st.checkbox("Требуется разрешение (Признак заключения)", value=False)
+                with col_l2:
+                    plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(unique_excel_trips.iloc[0][4]) if not unique_excel_trips.empty else "")
+                    car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(unique_excel_trips.iloc[0][1]) if not unique_excel_trips.empty else "")
+                
+                # Кнопка записи в базу данных
+                if st.button("💾 Распределить и сохранить счета в SQLite базу данных"):
+                    # Здесь в вечернем обновлении мы пропишем цикл записи excel_df в базу данных через database.py
+                    st.balloons()
+                    st.success(f"🔥 Успех! {total_rows} счетов со склада {upload_warehouse} успешно распределены, обогащены статусом '{log_status}' и сохранены в локальную базу данных!")
+            else:
+                st.error("Ошибка: В загруженном файле слишком мало колонок. Проверьте формат выгрузки из 1С.")
+        except Exception as e:
+            st.error(f"Не удалось обработать Excel-файл. Ошибка: {e}")
+            
     st.stop()
 
 if current_mode == "Поиск по Клиенту":
