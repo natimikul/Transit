@@ -217,6 +217,14 @@ def send_today_report_email(recipient_emails, target_sheets):
     Собирает данные за сегодня со всех активных листов, 
     формирует Excel и отправляет на указанные email-адреса.
     """
+    def send_today_report_email(recipient_emails, target_sheets):
+    """
+    Собирает данные за сегодня со всех активных листов...
+    """
+    # ВСТАВЬТЕ ЭТИ ДВЕ СТРОКИ СЮДА:
+    sender_email = st.secrets["email"]["sender_email"]
+    sender_password = st.secrets["email"]["sender_password"]
+
     today_str_1 = datetime.date.today().strftime('%d.%m.%Y') # Формат ДД.ММ.ГГГГ
     today_str_2 = datetime.date.today().strftime('%Y-%m-%d') # Формат ГГГГ-ММ-ДД
     
