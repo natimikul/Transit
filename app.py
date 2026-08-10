@@ -385,15 +385,24 @@ if current_mode == "Авто в пути":
     show_replenishment_page()
     st.stop()
 if current_mode == "Админ-панель" and is_admin:
-
+    st.subheader("⚙️ Панель администратора: Умный импорт ежедневного Excel")
+    
+    st.markdown("### 📥 1. Загрузка ежедневного отчета")
+    
+    upload_warehouse = st.selectbox(
+        "Укажите склад отправления для загружаемого файла:",
+        ["Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
+    )
+    
+    # Объявляем переменную здесь, чтобы она гарантированно существовала
+    uploaded_excel = st.file_uploader("Перетащите сюда файл Excel (.xlsx, .xls) из 1С:", type=["xlsx", "xls"])
+    
     if uploaded_excel is not None:
         try:
-            # Читаем Excel файл
             excel_df = pd.read_excel(uploaded_excel, header=None)
             excel_df = excel_df.dropna(how='all').reset_index(drop=True)
             
             if not excel_df.empty:
-                # Находим реальную строчку заголовка (где есть слово "Номер" или "Дата")
                 header_idx = 0
                 for i in range(min(5, len(excel_df))):
                     row_str = " ".join(excel_df.iloc[i].astype(str).lower())
@@ -401,23 +410,19 @@ if current_mode == "Админ-панель" and is_admin:
                         header_idx = i
                         break
                 
-                # Пересобираем датафрейм с правильными заголовками
                 excel_df.columns = excel_df.iloc[header_idx]
                 excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
                 
-                # Принудительно индексируем колонки цифрами от 1 для точного совпадения со скриншотом задания
-                # 1-Номер, 2-Дата, 3-Рейс, 4-Дата рейса, 5-Статус, 6-Сумма, 7-Клиент
+                # Принудительно индексируем колонки цифрами от 1 для сопоставления со скриншотом
                 excel_df.columns = list(range(1, len(excel_df.columns) + 1))
                 
                 # Фильтруем пустые строки по номеру документа (Колонка 1)
                 excel_df = excel_df[excel_df[1].notna() & (excel_df[1].astype(str).str.strip() != "")]
                 
-                # Функция для автоматического исправления кодировки 1С «кракозябр»
                 def fix_encoding(text):
                     if pd.isna(text): return ""
                     t_str = str(text).strip()
                     try:
-                        # Пробуем перекодировать из ошибочной латиницы обратно в кириллицу cp1251
                         return t_str.encode('cp1252').decode('cp1251')
                     except:
                         return t_str
@@ -430,7 +435,6 @@ if current_mode == "Админ-панель" and is_admin:
                 total_rows = len(excel_df)
                 st.success(f"📋 Файл успешно прочитан и нормализован! Обнаружено счетов: {total_rows}")
                 
-                # Автоматически определяем страну
                 if "Внуково" in upload_warehouse:
                     detected_country = "Россия"
                     flag_sys = "🇷🇺"
@@ -443,7 +447,6 @@ if current_mode == "Админ-панель" and is_admin:
                 st.markdown("---")
                 st.markdown("### 📊 2. Автоматическое распределение данных из файла")
                 
-                # Группировка по статусу из 1С
                 st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
                 statuses_1c = excel_df[5].unique()
                 for stat_1c in statuses_1c:
@@ -451,7 +454,6 @@ if current_mode == "Админ-панель" and is_admin:
                         sub_df_stat = excel_df[excel_df[5] == stat_1c]
                         st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
                 
-                # Группировка по рейсам и датам рейса с защитой от пустых значений
                 st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
                 excel_df[3] = excel_df[3].replace("", "БЕЗ РЕЙСА")
                 excel_df[4] = excel_df[4].fillna("-").astype(str).str.strip()
@@ -464,7 +466,6 @@ if current_mode == "Админ-панель" and is_admin:
                     trip_rows = excel_df[(excel_df[3] == trip_name) & (excel_df[4] == trip_date)]
                     st.write(f"🚢 Рейс: `{trip_name}` от `{trip_date}` — **{len(trip_rows)} счетов**")
                 
-                # БЛОК ИНСТРУМЕНТОВ ЛОГИСТА
                 st.markdown("---")
                 st.markdown("### 🛠️ 3. Инструменты группировки и логистики")
                 
@@ -477,8 +478,8 @@ if current_mode == "Админ-панель" and is_admin:
                     )
                     need_perm = st.checkbox("Требуется разрешение (Признак заключения)", value=False)
                 with col_l2:
-                    first_trip_date = unique_excel_trips.iloc[0][4] if not unique_excel_trips.empty else ""
-                    first_trip_name = unique_excel_trips.iloc[0][3] if not unique_excel_trips.empty else ""
+                    first_trip_date = unique_excel_trips.iloc[0, 1] if not unique_excel_trips.empty else ""
+                    first_trip_name = unique_excel_trips.iloc[0, 0] if not unique_excel_trips.empty else ""
                     plan_date = st.text_input("Плановая дата отгрузки (ДД.ММ.ГГ):", value=str(first_trip_date))
                     car_bind = st.text_input("Привязать к автомобилю (Номер авто/рейса):", value=str(first_trip_name))
                 
