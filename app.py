@@ -13,10 +13,13 @@ import pandas as pd
 import datetime
 from io import BytesIO
 from replenishment import show_replenishment_page
+from excel_import import parse_excel_1c, import_invoices_to_db
 from database import (
     init_db, save_car_to_db, get_all_cars_from_db,
     save_invoice_to_db, get_all_invoices, get_invoices_by_filters,
-    update_invoices_batch, delete_invoices_by_status
+    update_invoices_batch, delete_invoices_by_status,
+    update_invoice_status, get_active_cars, mark_car_arrived,
+    delete_car_by_id, update_car
 )
 
 # Инициализируем базу данных при старте
@@ -313,8 +316,6 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
-is_admin = st.session_state.get("admin_status") == "admin"
-
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 
@@ -368,297 +369,109 @@ cols_no_finance = ['№ заявки', '№ счета', 'Дата счета', 
 
 current_mode = st.session_state.get("active_report_mode", "Поиск по Клиенту")
 
-# ==================== АДМИН-ПАНЕЛЬ (ПОЛНОСТЬЮ ПЕРЕРАБОТАННАЯ) ====================
+# ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
 if current_mode == "Админ-панель" and is_admin:
-    st.subheader("⚙️ Панель администратора: Умный импорт ежедневного Excel")
+    st.subheader("⚙️ Панель администратора")
 
-    st.markdown("### 📥 1. Загрузка ежедневного отчета")
+    # Вкладки по этапам логистики
+    tab_import, tab_created, tab_permission, tab_assembly, tab_transit, tab_almaty = st.tabs([
+        "📥 Импорт из 1С",
+        "📋 Создан",
+        "🛡️ Разрешения (ожидание)",
+        "🔧 В сборке",
+        "🚛 В пути (авто)",
+        "🏢 Прибыл на склад Алматы",
+    ])
 
-    upload_warehouse = st.selectbox(
-        "Укажите склад отправления для загружаемого файла:",
-        ["Все склады вместе (Внуково, Брикета, Дроздово)", "Внуково (Россия)", "Брикета (Беларусь)", "Дроздово (Беларусь)"]
-    )
+    # ---------------- ВКЛАДКА: ИМПОРТ ----------------
+    with tab_import:
+        st.markdown("### 📥 Загрузка ежедневного отчёта из 1С")
+        st.caption("Файл Excel (.xlsx, .xls) из 1С. Строки склада «Алматы» игнорируются автоматически.")
 
-    uploaded_excel = st.file_uploader("Перетащите сюда файл Excel (.xlsx, .xls) из 1С:", type=["xlsx", "xls"])
+        uploaded_excel = st.file_uploader("Перетащите файл:", type=["xlsx", "xls"], key="uploader_1c")
 
-    # ==== ФУНКЦИЯ ИСПРАВЛЕНИЯ КОДИРОВКИ 1С (вынесена наружу) ====
-    def fix_encoding(text):
-        if pd.isna(text): return ""
-        t_str = str(text).strip()
-        try:
-            return t_str.encode('cp1252').decode('cp1251')
-        except:
-            return t_str
+        if uploaded_excel is not None:
+            try:
+                parsed_df, stats = parse_excel_1c(uploaded_excel)
 
-    excel_df = None
-    if uploaded_excel is not None:
-        try:
-            excel_df = pd.read_excel(uploaded_excel, header=None)
-            excel_df = excel_df.dropna(how='all').reset_index(drop=True)
-
-            if not excel_df.empty:
-                header_idx = 0
-                for i in range(min(5, len(excel_df))):
-                    row_str = " ".join(excel_df.iloc[i].astype(str).str.lower().tolist())
-                    if "номер" in row_str or "дата" in row_str or "рейс" in row_str:
-                        header_idx = i
-                        break
-
-                excel_df.columns = excel_df.iloc[header_idx]
-                excel_df = excel_df.iloc[header_idx + 1:].reset_index(drop=True)
-                excel_df.columns = list(range(1, len(excel_df.columns) + 1))
-
-                if 1 in excel_df.columns:
-                    excel_df = excel_df[excel_df[1].notna() & (excel_df[1].astype(str).str.strip() != "")]
-
-                if 3 in excel_df.columns:
-                    excel_df[3] = excel_df[3].apply(fix_encoding)
-                if 5 in excel_df.columns:
-                    excel_df[5] = excel_df[5].apply(fix_encoding)
-                if 7 in excel_df.columns:
-                    excel_df[7] = excel_df[7].apply(fix_encoding)
-                if 9 in excel_df.columns:
-                    excel_df[9] = excel_df[9].apply(fix_encoding)
-
-                def Энциклопедия_Строки(row):
-                    row_text = " ".join(row.dropna().astype(str).str.lower().tolist())
-                    if "алматы" in row_text:
-                        return None, None
-                    if "Внуково" in upload_warehouse and "внуково" in row_text:
-                        return "Внуково", "Россия"
-                    elif "Брикета" in upload_warehouse and "брикета" in row_text:
-                        return "Брикета", "Беларусь"
-                    elif "Дроздово" in upload_warehouse and "дроздово" in row_text:
-                        return "Дроздово", "Беларусь"
-                    elif "Все склады" in upload_warehouse:
-                        if "внуково" in row_text:
-                            return "Внуково", "Россия"
-                        elif "брикета" in row_text:
-                            return "Брикета", "Беларусь"
-                        elif "дроздово" in row_text:
-                            return "Дроздово", "Беларусь"
-                    return None, None
-
-                warehouse_and_country = excel_df.apply(Энциклопедия_Строки, axis=1)
-                excel_df['Системный_Склад'] = [item[0] for item in warehouse_and_country]
-                excel_df['Системная_Страна'] = [item[1] for item in warehouse_and_country]
-                excel_df = excel_df[excel_df['Системный_Склад'].notna()].reset_index(drop=True)
-
-                total_rows_loaded = len(excel_df)
-                st.success(f"📋 Файл успешно отфильтрован! Оставлено целевых счетов: {total_rows_loaded}")
-
-                if "Все склады" in upload_warehouse:
-                    st.info("📊 **Распределение по складам внутри файла (Игнорируя Алматы):**")
-                    for wh in ["Внуково", "Брикета", "Дроздово"]:
-                        count_wh = len(excel_df[excel_df['Системный_Склад'] == wh])
-                        flag = "🇷🇺" if wh == "Внуково" else "🇧🇾"
-                        if count_wh > 0:
-                            st.write(f"{flag} Склад **{wh}**: {count_wh} счетов")
+                if "error" in stats:
+                    st.error(stats["error"])
                 else:
-                    flag_sys = "🇷🇺" if "Внуково" in upload_warehouse else "🇧🇾"
-                    st.info(f"📍 Оставлен только склад: **{upload_warehouse}** | Страна: {flag_sys}")
+                    st.success(
+                        f"✅ Файл обработан. Всего строк: {stats['total_rows']}, "
+                        f"игнорировано (Алматы): {stats['ignored_almaty']}, "
+                        f"целевых: {stats['valid_rows']}"
+                    )
+                    # Распределение по складам
+                    st.markdown("**Распределение по складам:**")
+                    wh_col1, wh_col2, wh_col3 = st.columns(3)
+                    with wh_col1:
+                        st.metric("🇷🇺 Внуково", stats["by_warehouse"].get("Внуково", 0))
+                    with wh_col2:
+                        st.metric("🇧🇾 Брикета", stats["by_warehouse"].get("Брикета", 0))
+                    with wh_col3:
+                        st.metric("🇧🇾 Дроздово", stats["by_warehouse"].get("Дроздово", 0))
 
-            else:
-                st.error("Файл пуст или имеет неверную структуру.")
-        except Exception as e:
-            st.error(f"Не удалось обработать Excel-файл. Ошибка: {e}")
+                    # Распределение по статусам 1С
+                    st.markdown("**Статусы из 1С:**")
+                    for status_1c, count in stats.get("by_status_1c", {}).items():
+                        st.caption(f"▪️ {status_1c}: {count} шт.")
 
-    # ==== ШАГ 2: АВТОМАТИЧЕСКОЕ РАСПРЕДЕЛЕНИЕ ПО СТАТУСАМ 1С ====
-    if excel_df is not None and not excel_df.empty:
-        st.markdown("---")
-        st.markdown("### 📊 2. Автоматическое распределение данных из файла")
+                    # Кнопка импорта в БД
+                    st.markdown("---")
+                    col_imp1, col_imp2 = st.columns([1, 3])
+                    with col_imp1:
+                        if st.button("💾 Импортировать в базу", type="primary", key="btn_import"):
+                            with st.spinner("Импорт в базу..."):
+                                saved, updated, skipped = import_invoices_to_db(parsed_df)
+                            st.success(
+                                f"✅ Импорт завершён! Новых: {saved}, обновлено: {updated}, пропущено: {skipped}"
+                            )
+                            st.balloons()
+                    with col_imp2:
+                        st.caption("💡 Новые счета добавляются. Существующие обновляются, если их статус ещё не «В пути» / «Прибыл на склад Алматы» / «Готов к отгрузке» / «Отгружено клиенту».")
 
-        if 5 in excel_df.columns:
-            st.markdown("#### 🔹 Разделение счетов по Статусам из 1С:")
-            excel_df[5] = excel_df[5].replace("", "Не указан")
-            statuses_1c = excel_df[5].drop_duplicates().tolist()
-            for stat_1c in statuses_1c:
-                sub_df_stat = excel_df[excel_df[5] == stat_1c]
-                st.caption(f"▪️ Статус **'{stat_1c}'**: {len(sub_df_stat)} шт. счетов")
+                    # Предпросмотр
+                    with st.expander("👁️ Предпросмотр распознанных счетов", expanded=False):
+                        preview_cols = ["doc_number", "invoice_date", "client", "warehouse", "status_1c", "status", "trip_name"]
+                        st.dataframe(parsed_df[preview_cols], use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Не удалось обработать файл. Ошибка: {e}")
 
-        if 3 in excel_df.columns and 4 in excel_df.columns:
-            st.markdown("#### 🔹 Обнаруженные плановые рейсы (Колонки 3 и 4):")
-            excel_df[3] = excel_df[3].replace("", "БЕЗ РЕЙСА").fillna("БЕЗ РЕЙСА")
-            excel_df[4] = excel_df[4].fillna("-").astype(str).str.strip()
-            unique_excel_trips = excel_df[[3, 4]].drop_duplicates()
-            for _, trip in unique_excel_trips.iterrows():
-                trip_name = trip[3]
-                trip_date = trip[4]
-                trip_rows = excel_df[(excel_df[3] == trip_name) & (excel_df[4] == trip_date)]
-                st.write(f"🚢 Рейс: `{trip_name}` от `{trip_date}` — **{len(trip_rows)} счетов**")
+    # ---------------- ВКЛАДКА: СОЗДАН ----------------
+    with tab_created:
+        st.markdown("### 📋 Счета со статусом «Создан» (распределение по складам)")
+        st.caption("Отметьте нужно ли разрешение РБ и/или КЗ, проставьте плановую дату отгрузки. При сохранении счета перейдут в «В сборке» или «В сборке, ожидает разрешения».")
 
-        # ==== ШАГ 2.5: РАЗДЕЛЕНИЕ "НЕТ НАКЛАДНОЙ" ====
-        st.markdown("---")
-        st.markdown("### 📋 2.5 Разделение счетов со статусом 'НЕТ НАКЛАДНОЙ'")
+        created_invoices = get_invoices_by_filters(status_list=["Создан"])
 
-        no_invoice_mask = excel_df[5].astype(str).str.strip().str.lower() == "нет накладной"
-        no_invoice_df = excel_df[no_invoice_mask].copy()
-
-        if not no_invoice_df.empty:
-            st.info(f"Найдено **{len(no_invoice_df)}** счетов со статусом 'НЕТ НАКЛАДНОЙ'")
-
-            # Формируем DataFrame для редактирования
-            edit_no_inv = pd.DataFrame({
-                '№ счета': no_invoice_df[1].astype(str).str.strip(),
-                'Дата счета': no_invoice_df[2].astype(str).str.strip(),
-                'Клиент': no_invoice_df[7].apply(fix_encoding) if 7 in no_invoice_df.columns else "",
-                'ПкЦБ': "",
-                'Склад': no_invoice_df['Системный_Склад'] if 'Системный_Склад' in no_invoice_df.columns else (no_invoice_df[9].astype(str).str.strip() if 9 in no_invoice_df.columns else ""),
-                'Разрешение РБ': False,
-                'Разрешение КЗ': False,
-                'Примечание': ""
-            })
-
-            edited_no_inv = st.data_editor(
-                edit_no_inv,
-                column_config={
-                    '№ счета': st.column_config.TextColumn(disabled=True),
-                    'Дата счета': st.column_config.TextColumn(disabled=True),
-                    'Клиент': st.column_config.TextColumn(disabled=True),
-                    'ПкЦБ': st.column_config.TextColumn(help="Ручной ввод"),
-                    'Склад': st.column_config.TextColumn(disabled=True),
-                    'Разрешение РБ': st.column_config.CheckboxColumn(help="Отметить если нужно РБ"),
-                    'Разрешение КЗ': st.column_config.CheckboxColumn(help="Отметить если нужно КЗ"),
-                    'Примечание': st.column_config.TextColumn(help="Ручной ввод")
-                },
-                use_container_width=True,
-                hide_index=True,
-                num_rows="dynamic",
-                key="editor_no_invoice"
-            )
-
-            col_save1, col_clear1 = st.columns(2)
-            with col_save1:
-                if st.button("💾 Сохранить 'НЕТ НАКЛАДНОЙ' в базу", key="save_no_inv"):
-                    saved_count = 0
-                    for _, row in edited_no_inv.iterrows():
-                        data = {
-                            'doc_number': str(row['№ счета']),
-                            'invoice_date': str(row['Дата счета']),
-                            'client': str(row['Клиент']),
-                            'pkcb': str(row['ПкЦБ']),
-                            'warehouse': str(row['Склад']),
-                            'perm_rb': 1 if row['Разрешение РБ'] else 0,
-                            'perm_kz': 1 if row['Разрешение КЗ'] else 0,
-                            'note': str(row['Примечание']),
-                            'status': 'НЕТ НАКЛАДНОЙ',
-                            'status_1c': 'НЕТ НАКЛАДНОЙ',
-                            'source_sheet': upload_warehouse,
-                            'added_by': 'admin'
-                        }
-                        save_invoice_to_db(data)
-                        saved_count += 1
-                    st.success(f"✅ Успешно сохранено {saved_count} счетов 'НЕТ НАКЛАДНОЙ' в базу данных!")
-                    st.balloons()
-            with col_clear1:
-                if st.button("🗑️ Очистить 'НЕТ НАКЛАДНОЙ' из базы", key="clear_no_inv"):
-                    delete_invoices_by_status('НЕТ НАКЛАДНОЙ')
-                    st.warning("🗑️ Все счета со статусом 'НЕТ НАКЛАДНОЙ' удалены из базы.")
-                    st.rerun()
+        if created_invoices.empty:
+            st.info("📭 Нет счетов со статусом «Создан». Загрузите новый файл из 1С.")
         else:
-            st.info("Счетов со статусом 'НЕТ НАКЛАДНОЙ' в загруженном файле не обнаружено.")
+            st.markdown(f"**Найдено: {len(created_invoices)}**")
 
-        # ==== ШАГ 3: ИНСТРУМЕНТЫ ГРУППИРОВКИ И ЛОГИСТИКИ ====
-        st.markdown("---")
-        st.markdown("### 🛠️ 3. Инструменты группировки и логистики")
-
-        st.markdown("#### Фильтры отбора счетов из базы данных:")
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            filter_status = st.multiselect(
-                "Статус счета:",
-                ['НЕТ НАКЛАДНОЙ', 'Отгружен', 'Обработан', 'Не обрабатывать', 'Выгружен в WMS'],
-                default=[],
-                key="filter_status"
+            # Выбор склада для фильтрации
+            wh_filter = st.multiselect(
+                "Фильтр по складу:",
+                ["Внуково", "Брикета", "Дроздово"],
+                default=["Внуково", "Брикета", "Дроздово"],
+                key="created_wh_filter"
             )
-        with col_f2:
-            filter_warehouse = st.multiselect(
-                "Склад:",
-                ['Внуково', 'Брикета', 'Дроздово'],
-                default=[],
-                key="filter_warehouse"
-            )
-        with col_f3:
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                filter_perm_rb = st.checkbox("Разрешение РБ", key="filter_perm_rb")
-            with col_p2:
-                filter_perm_kz = st.checkbox("Разрешение КЗ", key="filter_perm_kz")
+            if wh_filter:
+                created_invoices = created_invoices[created_invoices["warehouse"].isin(wh_filter)]
 
-        # Загружаем счета из БД с учетом фильтров
-        db_invoices = get_invoices_by_filters(
-            status_list=filter_status if filter_status else None,
-            warehouse_list=filter_warehouse if filter_warehouse else None,
-            perm_rb=1 if filter_perm_rb else None,
-            perm_kz=1 if filter_perm_kz else None
-        )
-
-        st.markdown("---")
-        st.markdown("#### Массовые параметры логистики (применятся ко всем отображенным счетам при сохранении):")
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        with col_m1:
-            mass_plan_ship = st.date_input("Плановая дата отгрузки", value=None, key="mass_plan_ship")
-        with col_m2:
-            mass_perm_send = st.date_input("Дата отправки на разрешение", value=None, key="mass_perm_send")
-        with col_m3:
-            mass_trip = st.text_input("Рейс", key="mass_trip")
-        with col_m4:
-            mass_status = st.selectbox(
-                "Статус сборки:",
-                ["", "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути", "Задержка поставки", "Прибыл на склад Алматы"],
-                key="mass_status"
-            )
-
-        # Отображение таблицы с редактированием
-        if not db_invoices.empty:
-            st.markdown(f"**Найдено счетов в базе: {len(db_invoices)}**")
-
-            # Подготовка колонок для отображения
-            display_df = db_invoices.copy()
-
-            # Переименование для читаемости
-            rename_map = {
-                'id': 'ID',
-                'doc_number': '№ счета',
-                'invoice_date': 'Дата счета',
-                'client': 'Клиент',
-                'pkcb': 'ПкЦБ',
-                'warehouse': 'Склад',
-                'perm_rb': 'Разрешение РБ',
-                'perm_kz': 'Разрешение КЗ',
+            rename_map_created = {
+                'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
+                'client': 'Клиент', 'warehouse': 'Склад', 'perm_rb': 'Разрешение РБ',
+                'perm_kz': 'Разрешение КЗ', 'plan_ship_date': 'Плановая дата отгрузки',
                 'note': 'Примечание',
-                'plan_ship_date': 'Плановая дата отгрузки',
-                'fact_ship_date': 'Дата отгрузки (факт)',
-                'transit_days': 'Транзит (дней)',
-                'plan_arrival': 'Плановая дата прибытия',
-                'fact_arrival': 'Прибыл (факт)',
-                'status': 'Статус',
-                'perm_send_date': 'Дата отправки на разрешение',
-                'trip_name': 'Рейс'
             }
-            display_df = display_df.rename(columns={k: v for k, v in rename_map.items() if k in display_df.columns})
+            disp = created_invoices.rename(columns={k: v for k, v in rename_map_created.items() if k in created_invoices.columns})
+            disp = disp[['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Разрешение РБ',
+                         'Разрешение КЗ', 'Плановая дата отгрузки', 'Примечание']]
 
-            # Определяем порядок колонок
-            desired_cols = ['ID', '№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Склад',
-                           'Разрешение РБ', 'Разрешение КЗ', 'Примечание',
-                           'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Транзит (дней)',
-                           'Плановая дата прибытия', 'Прибыл (факт)', 'Статус',
-                           'Дата отправки на разрешение', 'Рейс']
-            available_cols = [c for c in desired_cols if c in display_df.columns]
-            display_df = display_df[available_cols]
-
-            # Заполняем массовые значения в пустые ячейки (для наглядности)
-            if mass_plan_ship and 'Плановая дата отгрузки' in display_df.columns:
-                display_df['Плановая дата отгрузки'] = display_df['Плановая дата отгрузки'].fillna(mass_plan_ship.strftime('%d.%m.%Y'))
-            if mass_perm_send and 'Дата отправки на разрешение' in display_df.columns:
-                display_df['Дата отправки на разрешение'] = display_df['Дата отправки на разрешение'].fillna(mass_perm_send.strftime('%d.%m.%Y'))
-            if mass_trip and 'Рейс' in display_df.columns:
-                display_df['Рейс'] = display_df['Рейс'].fillna(mass_trip)
-            if mass_status and 'Статус' in display_df.columns:
-                display_df['Статус'] = display_df['Статус'].replace('', mass_status).fillna(mass_status)
-
-            edited_db = st.data_editor(
-                display_df,
+            edited = st.data_editor(
+                disp,
                 column_config={
                     'ID': st.column_config.NumberColumn(disabled=True),
                     '№ счета': st.column_config.TextColumn(disabled=True),
@@ -667,57 +480,275 @@ if current_mode == "Админ-панель" and is_admin:
                     'Склад': st.column_config.TextColumn(disabled=True),
                     'Разрешение РБ': st.column_config.CheckboxColumn(),
                     'Разрешение КЗ': st.column_config.CheckboxColumn(),
-                    'ПкЦБ': st.column_config.TextColumn(),
+                    'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
                     'Примечание': st.column_config.TextColumn(),
-                    'Плановая дата отгрузки': st.column_config.TextColumn(),
-                    'Дата отгрузки (факт)': st.column_config.TextColumn(),
-                    'Транзит (дней)': st.column_config.TextColumn(),
-                    'Плановая дата прибытия': st.column_config.TextColumn(),
-                    'Прибыл (факт)': st.column_config.TextColumn(),
-                    'Статус': st.column_config.SelectboxColumn(
-                        options=["НЕТ НАКЛАДНОЙ", "Отгружен", "Обработан", "Не обрабатывать", "Выгружен в WMS",
-                                 "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути", "Задержка поставки", "Прибыл на склад Алматы"]
-                    ),
-                    'Дата отправки на разрешение': st.column_config.TextColumn(),
-                    'Рейс': st.column_config.TextColumn()
                 },
-                use_container_width=True,
-                hide_index=True,
-                num_rows="dynamic",
-                key="editor_db_invoices"
+                use_container_width=True, hide_index=True,
+                num_rows="dynamic", key="editor_created"
             )
 
-            col_save2, col_refresh2 = st.columns(2)
-            with col_save2:
-                if st.button("💾 Сохранить изменения в базу", key="save_db_changes"):
-                    # Переименовываем обратно для записи в БД
-                    reverse_map = {v: k for k, v in rename_map.items()}
-                    update_df = edited_db.rename(columns=reverse_map)
+            if st.button("💾 Сохранить и распределить", type="primary", key="btn_created"):
+                reverse = {v: k for k, v in rename_map_created.items()}
+                upd = edited.rename(columns=reverse)
+                # Определяем новый статус для каждой строки
+                def _new_status(row):
+                    if row.get('perm_rb') or row.get('perm_kz'):
+                        return "В сборке, ожидает разрешения"
+                    return "В сборке"
+                upd['status'] = upd.apply(_new_status, axis=1)
+                upd['perm_rb'] = upd['perm_rb'].fillna(0).astype(int)
+                upd['perm_kz'] = upd['perm_kz'].fillna(0).astype(int)
+                update_invoices_batch(upd)
+                st.success("✅ Сохранено! Счета распределены по статусам «В сборке» / «В сборке, ожидает разрешения».")
+                st.rerun()
 
-                    # Применяем массовые параметры к пустым полям
-                    if mass_plan_ship and 'plan_ship_date' in update_df.columns:
-                        update_df['plan_ship_date'] = update_df['plan_ship_date'].replace('', mass_plan_ship.strftime('%d.%m.%Y')).fillna(mass_plan_ship.strftime('%d.%m.%Y'))
-                    if mass_perm_send and 'perm_send_date' in update_df.columns:
-                        update_df['perm_send_date'] = update_df['perm_send_date'].replace('', mass_perm_send.strftime('%d.%m.%Y')).fillna(mass_perm_send.strftime('%d.%m.%Y'))
-                    if mass_trip and 'trip_name' in update_df.columns:
-                        update_df['trip_name'] = update_df['trip_name'].replace('', mass_trip).fillna(mass_trip)
-                    if mass_status and 'status' in update_df.columns:
-                        update_df['status'] = update_df['status'].replace('', mass_status).fillna(mass_status)
+    # ---------------- ВКЛАДКА: РАЗРЕШЕНИЯ ----------------
+    with tab_permission:
+        st.markdown("### 🛡️ Счета, ожидающие разрешения РБ / КЗ")
+        st.caption("Когда разрешение получено — снимите галочку и нажмите «Отправить в сборку».")
 
-                    # Приводим boolean к int
-                    if 'perm_rb' in update_df.columns:
-                        update_df['perm_rb'] = update_df['perm_rb'].astype(int)
-                    if 'perm_kz' in update_df.columns:
-                        update_df['perm_kz'] = update_df['perm_kz'].astype(int)
+        perm_invoices = get_invoices_by_filters(status_list=["В сборке, ожидает разрешения"])
 
-                    update_invoices_batch(update_df)
-                    st.success("✅ Все изменения успешно сохранены в базу данных!")
-                    st.balloons()
-            with col_refresh2:
-                if st.button("🔄 Обновить таблицу", key="refresh_db"):
-                    st.rerun()
+        if perm_invoices.empty:
+            st.info("📭 Нет счетов, ожидающих разрешения.")
         else:
-            st.info("📭 По заданным фильтрам счетов в базе не найдено. Загрузите данные через раздел 'НЕТ НАКЛАДНОЙ' или проверьте фильтры.")
+            st.markdown(f"**Найдено: {len(perm_invoices)}**")
+
+            rename_map_perm = {
+                'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
+                'client': 'Клиент', 'warehouse': 'Склад', 'perm_rb': 'Разрешение РБ',
+                'perm_kz': 'Разрешение КЗ', 'perm_send_date': 'Дата отправки на разрешение',
+                'plan_ship_date': 'Плановая дата отгрузки', 'note': 'Примечание',
+            }
+            disp = perm_invoices.rename(columns={k: v for k, v in rename_map_perm.items() if k in perm_invoices.columns})
+            available = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Разрешение РБ',
+                                      'Разрешение КЗ', 'Дата отправки на разрешение',
+                                      'Плановая дата отгрузки', 'Примечание'] if c in disp.columns]
+            disp = disp[available]
+
+            edited = st.data_editor(
+                disp,
+                column_config={
+                    'ID': st.column_config.NumberColumn(disabled=True),
+                    '№ счета': st.column_config.TextColumn(disabled=True),
+                    'Дата счета': st.column_config.TextColumn(disabled=True),
+                    'Клиент': st.column_config.TextColumn(disabled=True),
+                    'Склад': st.column_config.TextColumn(disabled=True),
+                    'Разрешение РБ': st.column_config.CheckboxColumn(),
+                    'Разрешение КЗ': st.column_config.CheckboxColumn(),
+                    'Дата отправки на разрешение': st.column_config.TextColumn(disabled=True),
+                    'Плановая дата отгрузки': st.column_config.TextColumn(disabled=True),
+                    'Примечание': st.column_config.TextColumn(),
+                },
+                use_container_width=True, hide_index=True,
+                num_rows="dynamic", key="editor_perm"
+            )
+
+            if st.button("🔧 Отправить в сборку", type="primary", key="btn_perm"):
+                reverse = {v: k for k, v in rename_map_perm.items()}
+                upd = edited.rename(columns=reverse)
+                for _, row in upd.iterrows():
+                    # Снимаем флаги разрешения и меняем статус на «В сборке»
+                    update_invoice_status(int(row['id']), "В сборке")
+                st.success("✅ Счета отправлены в сборку (статус «В сборке»).")
+                st.rerun()
+
+    # ---------------- ВКЛАДКА: В СБОРКЕ ----------------
+    with tab_assembly:
+        st.markdown("### 🔧 Счета в сборке")
+        st.caption("Проставьте дату отгрузки (факт) и номер ПкЦБ. Отметив авто и дни транзита, переведите в «В пути».")
+
+        assembly_invoices = get_invoices_by_filters(status_list=["В сборке"])
+
+        if assembly_invoices.empty:
+            st.info("📭 Нет счетов в сборке.")
+        else:
+            st.markdown(f"**Найдено: {len(assembly_invoices)}**")
+
+            rename_map_asm = {
+                'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
+                'client': 'Клиент', 'warehouse': 'Склад', 'pkcb': 'ПкЦБ',
+                'fact_ship_date': 'Дата отгрузки (факт)', 'transit_days': 'Транзит (дней)',
+                'plan_arrival': 'Плановая дата прибытия', 'plan_ship_date': 'Плановая дата отгрузки',
+                'note': 'Примечание',
+            }
+            disp = assembly_invoices.rename(columns={k: v for k, v in rename_map_asm.items() if k in assembly_invoices.columns})
+            available = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
+                                      'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Транзит (дней)',
+                                      'Плановая дата прибытия', 'Примечание'] if c in disp.columns]
+            disp = disp[available]
+
+            edited = st.data_editor(
+                disp,
+                column_config={
+                    'ID': st.column_config.NumberColumn(disabled=True),
+                    '№ счета': st.column_config.TextColumn(disabled=True),
+                    'Дата счета': st.column_config.TextColumn(disabled=True),
+                    'Клиент': st.column_config.TextColumn(disabled=True),
+                    'Склад': st.column_config.TextColumn(disabled=True),
+                    'ПкЦБ': st.column_config.TextColumn(),
+                    'Плановая дата отгрузки': st.column_config.TextColumn(disabled=True),
+                    'Дата отгрузки (факт)': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
+                    'Транзит (дней)': st.column_config.NumberColumn(help="Число"),
+                    'Плановая дата прибытия': st.column_config.TextColumn(disabled=True, help="Расчёт: дата отгрузки + транзит"),
+                    'Примечание': st.column_config.TextColumn(),
+                },
+                use_container_width=True, hide_index=True,
+                num_rows="dynamic", key="editor_assembly"
+            )
+
+            if st.button("🚛 Отправить в путь", type="primary", key="btn_assembly"):
+                reverse = {v: k for k, v in rename_map_asm.items()}
+                upd = edited.rename(columns=reverse)
+                # Считаем плановую дату прибытия = дата отгрузки + транзит
+                def _calc_arrival(row):
+                    ship_date_str = str(row.get('fact_ship_date', '')).strip()
+                    transit = row.get('transit_days')
+                    if not ship_date_str or not transit:
+                        return ""
+                    try:
+                        ship_dt = pd.to_datetime(ship_date_str, format='%d.%m.%Y', errors='coerce')
+                        if pd.isna(ship_dt):
+                            ship_dt = pd.to_datetime(ship_date_str, errors='coerce')
+                        if pd.notna(ship_dt):
+                            return (ship_dt + pd.Timedelta(days=int(transit))).strftime('%d.%m.%Y')
+                    except Exception:
+                        pass
+                    return ""
+                upd['plan_arrival'] = upd.apply(_calc_arrival, axis=1)
+                upd['status'] = "В пути"
+                upd['perm_rb'] = 0
+                upd['perm_kz'] = 0
+                update_invoices_batch(upd)
+                st.success("✅ Счета переведены в статус «В пути». Плановая дата прибытия рассчитана.")
+                st.rerun()
+
+    # ---------------- ВКЛАДКА: В ПУТИ (АВТО) ----------------
+    with tab_transit:
+        st.markdown("### 🚛 Авто в пути (вкладка «Пополн»)")
+        st.caption("Создайте авто, отметьте прибытие — счета автоматически перейдут в «Прибыл на склад Алматы».")
+
+        # Создание нового авто
+        with st.expander("➕ Добавить авто", expanded=False):
+            col_a1, col_a2, col_a3 = st.columns(3)
+            with col_a1:
+                new_dispatch = st.date_input("Дата отгрузки", key="car_dispatch")
+                new_country = st.text_input("Страна (РФ/Беларусь)", key="car_country")
+            with col_a2:
+                new_location = st.text_input("Локация", key="car_location")
+                new_est_arrival = st.date_input("Плановая дата прибытия", key="car_est_arrival")
+            with col_a3:
+                new_doc_numbers = st.text_area("№ документов (ПкЦБ) — по одному в строке", key="car_docs", height=100)
+                new_rkz_numbers = st.text_area("№ РКЗ (СЧКЗ) — по одному в строке", key="car_rkz", height=100)
+
+            if st.button("💾 Сохранить авто", key="btn_save_car"):
+                docs = "\n".join([d.strip() for d in new_doc_numbers.split("\n") if d.strip()])
+                rkzs = "\n".join([d.strip() for d in new_rkz_numbers.split("\n") if d.strip()])
+                auto_id = save_car_to_db(
+                    dispatch_date=new_dispatch.strftime('%d.%m.%Y'),
+                    country=new_country,
+                    location=new_location,
+                    doc_number=docs,
+                    rkz_number=rkzs,
+                    estimated_arrival=new_est_arrival.strftime('%d.%m.%Y'),
+                )
+                st.success(f"✅ Авто #{auto_id} добавлено.")
+                st.rerun()
+
+        # Список авто в пути
+        st.markdown("### 🚛 Активные авто")
+        active_cars = get_active_cars()
+
+        if active_cars.empty:
+            st.info("📭 Нет активных авто.")
+        else:
+            for _, car in active_cars.iterrows():
+                car_id = car['id']
+                flag = "🇷🇺" if "росс" in str(car.get('country', '')).lower() or "рф" in str(car.get('country', '')).lower() else "🇧🇾"
+                header = f"{flag} Авто #{car_id} | Отгрузка: {car.get('dispatch_date', '-')} | {car.get('location', '-')} | План: {car.get('estimated_arrival', '-')}"
+
+                with st.expander(header, expanded=False):
+                    docs_list = [d.strip() for d in str(car.get('doc_number', '')).split("\n") if d.strip()]
+                    rkz_list = [d.strip() for d in str(car.get('rkz_number', '')).split("\n") if d.strip()]
+
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.caption(f"📋 ПкЦБ ({len(docs_list)}):")
+                        if docs_list:
+                            st.code("\n".join(docs_list), language="")
+                    with col_d2:
+                        st.caption(f"📑 № РКЗ ({len(rkz_list)}):")
+                        if rkz_list:
+                            st.code("\n".join(rkz_list), language="")
+
+                    # Отметка прибытия
+                    col_arr1, col_arr2, col_arr3 = st.columns([2, 1, 1])
+                    with col_arr1:
+                        fact_arr = st.date_input(f"Фактическая дата прибытия авто #{car_id}", key=f"fact_arr_{car_id}")
+                    with col_arr2:
+                        if st.button("✅ Отметить прибытие", key=f"btn_arrive_{car_id}", type="primary"):
+                            affected = mark_car_arrived(car_id, fact_arr.strftime('%d.%m.%Y'))
+                            st.success(f"✅ Авто прибыло. Перенесено счетов в «Прибыл на склад Алматы»: {affected}")
+                            st.rerun()
+                    with col_arr3:
+                        if st.button("🗑️ Удалить", key=f"btn_del_car_{car_id}"):
+                            delete_car_by_id(car_id)
+                            st.rerun()
+
+    # ---------------- ВКЛАДКА: АЛМАТЫ ----------------
+    with tab_almaty:
+        st.markdown("### 🏢 Счета на складе Алматы")
+        st.caption("Проставьте дату «Расценен» — статус изменится на «Готов к отгрузке клиенту».")
+
+        almaty_invoices = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"])
+
+        if almaty_invoices.empty:
+            st.info("📭 Нет счетов на складе Алматы.")
+        else:
+            st.markdown(f"**Найдено: {len(almaty_invoices)}**")
+
+            rename_map_alm = {
+                'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
+                'client': 'Клиент', 'warehouse': 'Склад', 'fact_arrival': 'Дата прибытия',
+                'rated_date': 'Расценен', 'status': 'Статус', 'note': 'Примечание',
+            }
+            disp = almaty_invoices.rename(columns={k: v for k, v in rename_map_alm.items() if k in almaty_invoices.columns})
+            available = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия',
+                                      'Расценен', 'Статус', 'Примечание'] if c in disp.columns]
+            disp = disp[available]
+
+            edited = st.data_editor(
+                disp,
+                column_config={
+                    'ID': st.column_config.NumberColumn(disabled=True),
+                    '№ счета': st.column_config.TextColumn(disabled=True),
+                    'Дата счета': st.column_config.TextColumn(disabled=True),
+                    'Клиент': st.column_config.TextColumn(disabled=True),
+                    'Склад': st.column_config.TextColumn(disabled=True),
+                    'Дата прибытия': st.column_config.TextColumn(disabled=True),
+                    'Расценен': st.column_config.TextColumn(help="ДД.ММ.ГГГГ — при заполнении статус → «Готов к отгрузке клиенту»"),
+                    'Статус': st.column_config.SelectboxColumn(
+                        options=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"],
+                        disabled=True,
+                    ),
+                    'Примечание': st.column_config.TextColumn(),
+                },
+                use_container_width=True, hide_index=True,
+                num_rows="dynamic", key="editor_almaty"
+            )
+
+            if st.button("💾 Сохранить", type="primary", key="btn_almaty"):
+                reverse = {v: k for k, v in rename_map_alm.items()}
+                upd = edited.rename(columns=reverse)
+                # Статус зависит от заполненности «Расценен»
+                def _alm_status(rated):
+                    return "Готов к отгрузке клиенту" if str(rated).strip() else "Прибыл на склад Алматы"
+                upd['status'] = upd['rated_date'].apply(_alm_status)
+                upd['perm_rb'] = 0
+                upd['perm_kz'] = 0
+                update_invoices_batch(upd)
+                st.success("✅ Сохранено! Счета с датой «Расценен» → «Готов к отгрузке клиенту».")
+                st.rerun()
 
     st.stop()
 
