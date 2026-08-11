@@ -274,10 +274,7 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
-# Вход в админку по секретному хвостику в ссылке сайта (?admin=yes)
-is_admin = False
-if "admin" in st.query_params and st.query_params["admin"] == "yes":
-    is_admin = True
+is_admin = st.session_state.get("admin_status") == "admin"
 
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
