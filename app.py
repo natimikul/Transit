@@ -5,6 +5,9 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 
+# --- ИМПОРТЫ ДЛЯ БЕЗОПАСНОЙ АВТОРИЗАЦИИ ---
+import bcrypt
+
 import streamlit as st
 import pandas as pd
 import datetime
@@ -23,28 +26,64 @@ init_db()
 st.set_page_config(page_title="Система мониторинга", layout="wide")
 st.title("📦 Система мониторинга статуса счетов")
 
-# --- 1. ЗАЩИТА ПАРОЛЕМ ---
-CORRECT_PASSWORD = st.secrets["auth"]["user_password"]
-ADMIN_PASSWORD = st.secrets["auth"]["admin_password"]
+# --- 1. ЗАЩИТА ПАРОЛЕМ (БЕЗ ХАРДКОДА: хэши в st.secrets) ---
+# Пароли хранятся в st.secrets в виде bcrypt-хэшей. Сгенерировать хэш:
+#   python -c "import bcrypt; print(bcrypt.hashpw('вашпароль'.encode(), bcrypt.gensalt()).decode())"
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    """Проверка пароля через bcrypt."""
+    if not password or not password_hash:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+def _authenticate_user(password: str) -> bool:
+    """Сопоставляет пароль с хэшами в st.secrets, выставляет admin_status."""
+    try:
+        user_hash = st.secrets["auth"]["user_password_hash"]
+        admin_hash = st.secrets["auth"]["admin_password_hash"]
+    except (KeyError, FileNotFoundError):
+        st.error(
+            "❌ Конфигурация авторизации не найдена. "
+            "В Settings → Secrets на Streamlit Cloud добавьте раздел [auth] "
+            "с полями user_password_hash и admin_password_hash."
+        )
+        st.stop()
+    if _verify_password(password, admin_hash):
+        st.session_state.authenticated = True
+        st.session_state.admin_status = "admin"
+        return True
+    if _verify_password(password, user_hash):
+        st.session_state.authenticated = True
+        st.session_state.admin_status = "user"
+        return True
+    return False
+
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "admin_status" not in st.session_state:
+    st.session_state.admin_status = "guest"
 
 if not st.session_state.authenticated:
     st.subheader("🔒 Вход в систему")
     user_password = st.text_input("Введите пароль для доступа к отчетам:", type="password")
     if st.button("Войти 🔑"):
-        if user_password == CORRECT_PASSWORD:
-            st.session_state.authenticated = True
-            st.session_state.admin_status = "user"
-            st.rerun()
-        elif user_password == ADMIN_PASSWORD:
-            st.session_state.authenticated = True
-            st.session_state.admin_status = "admin"
+        if _authenticate_user(user_password):
             st.rerun()
         else:
             st.error("❌ Неверный пароль! Доступ заблокирован.")
             st.stop()
+    st.stop()
+
+# --- ОПРЕДЕЛЕНИЕ АДМИН-СТАТУСА (ТОЛЬКО ЧЕРЕЗ session_state) ---
+# Раньше админ определялся по ?admin=yes в URL — это позволяло любому пользователю
+# дописать параметр и открыть админ-панель. Теперь используем только
+# значение, выставленное при авторизации.
+is_admin = st.session_state.get("admin_status") == "admin"
 
 # --- 2. ПРЯМЫЕ ССЫЛКИ НА ВЕБ-ПУБЛИКАЦИИ CSV ЛИСТОВ ---
 sheet_urls = {
