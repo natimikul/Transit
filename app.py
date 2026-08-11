@@ -38,7 +38,7 @@ if not st.session_state.authenticated:
             st.session_state.authenticated = True
             st.session_state.admin_status = "user"
             st.rerun()
-        elif user_password == "ADMIN_PASSWORD":
+        elif user_password == ADMIN_PASSWORD:
             st.session_state.authenticated = True
             st.session_state.admin_status = "admin"
             st.rerun()
