@@ -1,0 +1,241 @@
+"""Логика импорта Excel-файлов из 1С в базу данных.
+
+Файл 1С имеет кодировку cp1251 и фиксированную структуру колонок:
+  1 — Номер (CЧКЗ-...)
+  2 — Дата
+  3 — Рейс
+  4 — Дата рейса
+  5 — Статус (Отгружен / К сборке / НЕТ НАКЛАДНОЙ / ...)
+  6 — Сумма
+  7 — Клиент
+  8 — Торговая точка
+  9 — Склад (Склад Внуково / Склад Брикета 31 / Склад Дроздово / Склад Алматы)
+  10 — Реклама
+  11 — Номер заказа
+
+Строки со складом «Склад Алматы» игнорируются.
+"""
+import pandas as pd
+from database import save_invoice_to_db
+
+
+WAREHOUSE_MAP = {
+    "склад внуково": "Внуково",
+    "склад брикета": "Брикета",
+    "склад брикета 31": "Брикета",
+    "склад дроздово": "Дроздово",
+}
+
+STATUS_MAP = {
+    "нет накладной": "Создан",
+    "к сборке": "В сборке",
+    "отгружен": "Отгружен",
+    "обработан": "Обработан",
+    "выгружен в wms": "Выгружен в WMS",
+    "не обрабатывать": "Не обрабатывать",
+    "отменен": "Отменен",
+}
+
+
+def fix_encoding(text):
+    """Исправление кодировки cp1251 через cp1252."""
+    if pd.isna(text):
+        return ""
+    t_str = str(text).strip()
+    try:
+        return t_str.encode("cp1252").decode("cp1251")
+    except Exception:
+        return t_str
+
+
+def normalize_warehouse(raw_value):
+    """Склад Внуково → Внуково. Возвращает None для Алматы и неизвестных."""
+    if not raw_value:
+        return None
+    val = str(raw_value).strip().lower()
+    for key, mapped in WAREHOUSE_MAP.items():
+        if key in val:
+            return mapped
+    return None
+
+
+def map_status_1c(status_1c):
+    """Преобразует статус из 1С во внутренний статус приложения."""
+    if not status_1c:
+        return None
+    return STATUS_MAP.get(str(status_1c).strip().lower())
+
+
+def parse_excel_1c(uploaded_file):
+    """
+    Читает загруженный Excel-файл 1С и возвращает DataFrame с распознанными
+    счетами (склад Алматы отфильтрован).
+
+    Возвращает: (df_parsed, stats_dict)
+      df_parsed — DataFrame с колонками:
+        doc_number, invoice_date, trip_name, trip_date, status_1c,
+        client, warehouse, order_number
+      stats_dict — словарь со статистикой загрузки.
+    """
+    raw_df = pd.read_excel(uploaded_file, header=None)
+    raw_df = raw_df.dropna(how="all").reset_index(drop=True)
+
+    if raw_df.empty:
+        return pd.DataFrame(), {"error": "Файл пуст."}
+
+    # Поиск строки заголовка: ищем «Номер» в первых 5 строках
+    header_idx = 0
+    for i in range(min(5, len(raw_df))):
+        row_values = [str(v) for v in raw_df.iloc[i].tolist()]
+        row_str = " ".join(row_values).lower()
+        if "номер" in row_str and "дата" in row_str:
+            header_idx = i
+            break
+
+    # Используем заголовок для проверки, но колонки нумеруем по порядку
+    # (в 1С порядок колонок фиксирован)
+    raw_df = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
+    raw_df.columns = list(range(1, len(raw_df.columns) + 1))
+
+    # Фильтруем: колонка 1 (Номер) должна быть непустой
+    if 1 in raw_df.columns:
+        raw_df = raw_df[
+            raw_df[1].notna()
+            & (raw_df[1].astype(str).str.strip() != "")
+        ].reset_index(drop=True)
+
+    if raw_df.empty:
+        return pd.DataFrame(), {"error": "В файле нет строк с номерами счетов."}
+
+    # Применяем исправление кодировки к строковым колонкам
+    string_cols = [c for c in [1, 2, 3, 4, 5, 7, 9, 11] if c in raw_df.columns]
+    for col in string_cols:
+        raw_df[col] = raw_df[col].apply(fix_encoding)
+
+    # Нормализуем склад (колонка 9)
+    if 9 not in raw_df.columns:
+        return pd.DataFrame(), {"error": "В файле нет колонки «Склад» (ожидается колонка 9)."}
+
+    raw_df["warehouse_norm"] = raw_df[9].apply(normalize_warehouse)
+
+    # Статистика
+    total_rows = len(raw_df)
+    ignored_almaty = raw_df["warehouse_norm"].isna().sum()
+    valid_mask = raw_df["warehouse_norm"].notna()
+    valid_df = raw_df[valid_mask].reset_index(drop=True)
+
+    stats = {
+        "total_rows": int(total_rows),
+        "ignored_almaty": int(ignored_almaty),
+        "valid_rows": int(len(valid_df)),
+        "by_warehouse": valid_df["warehouse_norm"].value_counts().to_dict() if not valid_df.empty else {},
+        "by_status_1c": valid_df[5].value_counts().to_dict() if 5 in valid_df.columns else {},
+    }
+
+    # Формируем итоговый DataFrame
+    result = pd.DataFrame({
+        "doc_number": valid_df[1].astype(str).str.strip() if 1 in valid_df.columns else "",
+        "invoice_date": valid_df[2].astype(str).str.strip() if 2 in valid_df.columns else "",
+        "trip_name": valid_df[3].astype(str).str.strip() if 3 in valid_df.columns else "",
+        "trip_date": valid_df[4].astype(str).str.strip() if 4 in valid_df.columns else "",
+        "status_1c": valid_df[5].astype(str).str.strip() if 5 in valid_df.columns else "",
+        "client": valid_df[7].astype(str).str.strip() if 7 in valid_df.columns else "",
+        "warehouse": valid_df["warehouse_norm"],
+        "order_number": valid_df[11].astype(str).str.strip() if 11 in valid_df.columns else "",
+    })
+
+    # Внутренний статус
+    result["status"] = result["status_1c"].apply(map_status_1c)
+    # Если статус не распознан — ставим «Создан» как безопасное значение по умолчанию
+    result["status"] = result["status"].fillna("Создан")
+
+    stats["by_internal_status"] = result["status"].value_counts().to_dict()
+
+    return result, stats
+
+
+def import_invoices_to_db(parsed_df, added_by="admin"):
+    """
+    Сохраняет распознанные счета в БД.
+    Если doc_number уже существует — обновляет (не дублирует).
+
+    Возвращает: (saved_count, updated_count, skipped_count)
+    """
+    if parsed_df.empty:
+        return 0, 0, 0
+
+    import sqlite3
+    from database import DB_NAME
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    saved_count = 0
+    updated_count = 0
+    skipped_count = 0
+
+    for _, row in parsed_df.iterrows():
+        doc_number = str(row.get("doc_number", "")).strip()
+        if not doc_number:
+            skipped_count += 1
+            continue
+
+        # Проверяем, существует ли уже такой счёт
+        cursor.execute(
+            "SELECT id FROM invoices WHERE doc_number = ?", (doc_number,)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            # Обновляем статус и рейс (если счёт уже был загружен ранее)
+            existing_id = existing[0]
+            cursor.execute('''
+                UPDATE invoices SET
+                    status_1c = ?,
+                    trip_name = ?,
+                    trip_date = ?,
+                    invoice_date = ?,
+                    client = ?,
+                    warehouse = ?,
+                    order_number = ?
+                WHERE id = ? AND (status NOT IN ('В пути', 'Прибыл на склад Алматы',
+                                                  'Готов к отгрузке клиенту', 'Отгружено клиенту'))
+            ''', (
+                row.get("status_1c"),
+                row.get("trip_name"),
+                row.get("trip_date"),
+                row.get("invoice_date"),
+                row.get("client"),
+                row.get("warehouse"),
+                row.get("order_number"),
+                existing_id,
+            ))
+            if cursor.rowcount > 0:
+                updated_count += 1
+            else:
+                skipped_count += 1
+        else:
+            # Новый счёт — вставляем
+            cursor.execute('''
+                INSERT INTO invoices (
+                    doc_number, invoice_date, client, warehouse, status, status_1c,
+                    trip_name, trip_date, order_number, source_sheet, added_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                doc_number,
+                row.get("invoice_date"),
+                row.get("client"),
+                row.get("warehouse"),
+                row.get("status"),
+                row.get("status_1c"),
+                row.get("trip_name"),
+                row.get("trip_date"),
+                row.get("order_number"),
+                "excel_1c",
+                added_by,
+            ))
+            saved_count += 1
+
+    conn.commit()
+    conn.close()
+    return saved_count, updated_count, skipped_count
