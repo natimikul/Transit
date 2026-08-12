@@ -19,7 +19,9 @@ from database import (
     save_invoice_to_db, get_all_invoices, get_invoices_by_filters,
     update_invoices_batch, delete_invoices_by_status,
     update_invoice_status, get_active_cars, mark_car_arrived,
-    delete_car_by_id, update_car, delete_invoice_by_id
+    delete_car_by_id, update_car, delete_invoice_by_id,
+    link_auto_to_invoices_by_rkz, link_auto_to_invoices_by_pkcb,
+    get_car_invoices_count, get_invoices_for_email
 )
 
 # Инициализируем базу данных при старте
@@ -316,6 +318,93 @@ def send_today_report_email(recipient_emails, target_sheets):
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
 
+
+def send_status_email(status, recipient_emails):
+    """
+    Email-рассылка по счетам определённого статуса.
+    Используется для «Прибыл на склад Алматы» и «Готов к отгрузке клиенту».
+    Список адресов берётся из st.secrets['email']['notify_emails'] (если есть)
+    или из аргумента recipient_emails.
+    """
+    try:
+        sender_email = st.secrets["email"]["sender_email"]
+        sender_password = st.secrets["email"]["sender_password"]
+    except (KeyError, FileNotFoundError):
+        st.error("❌ Не настроены параметры почты в st.secrets (раздел [email]).")
+        return False
+
+    # Список адресов: приоритет из аргумента, затем из secrets
+    if not recipient_emails:
+        try:
+            recipient_emails = st.secrets["email"]["notify_emails"]
+        except (KeyError, FileNotFoundError):
+            st.error("❌ Не задан список адресов для рассылки (st.secrets['email']['notify_emails']).")
+            return False
+
+    df = get_invoices_for_email(status)
+    if df.empty:
+        st.warning(f"Нет счетов со статусом «{status}».")
+        return False
+
+    today_formatted = datetime.date.today().strftime('%d.%m.%Y')
+    status_label = "Прибыл на склад Алматы" if "Прибыл" in status else "Готов к отгрузке клиенту"
+
+    # Формируем тело письма
+    rows_text = ""
+    for _, r in df.iterrows():
+        rows_text += (
+            f"  • {r.get('doc_number', '-')} | {r.get('client', '-')} | "
+            f"Склад: {r.get('warehouse', '-')} | Дата прибытия: {r.get('fact_arrival', '-')} | "
+            f"Расценен: {r.get('rated_date', '-')}\n"
+        )
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_emails
+    msg['Subject'] = f"Транзит — {status_label} ({len(df)} шт.) — {today_formatted}"
+
+    body = f"""Добрый день!
+
+Информируем о счетах со статусом «{status_label}» на {today_formatted}.
+Всего счетов: {len(df)}.
+
+Список:
+{rows_text}
+
+С уважением,
+Система мониторинга транзита.
+"""
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+    # Прикрепляем Excel-вложение
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name=status_label[:31])
+    part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    part.set_payload(excel_buffer.getvalue())
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', 'attachment',
+                    filename=f"{status_label}_{today_formatted}.xlsx".replace(' ', '_'))
+    msg.attach(part)
+
+    try:
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 465
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.starttls()
+        server.login(sender_email, sender_password)
+        recipients_list = [e.strip() for e in str(recipient_emails).split(',') if e.strip()]
+        server.sendmail(sender_email, recipients_list, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Не удалось отправить письмо. Ошибка: {e}")
+        return False
+
+
 # --- 7. ПАНЕЛЬ С КНОПКАМИ ОТЧЕТОВ ---
 st.subheader("📋 Формирование отчетов")
 
@@ -440,80 +529,96 @@ if current_mode == "Админ-панель" and is_admin:
 
     # ---------------- ВКЛАДКА: СОЗДАН ----------------
     with tab_created:
-        st.markdown("### 📋 Счета со статусом «Создан»")
+        st.markdown("### 📋 Счета со статусом «Создан» и «Не обрабатывать»")
         st.caption("Отметьте нужно ли разрешение РБ и/или КЗ, проставьте плановую дату отгрузки. При сохранении счета перейдут в «В сборке» или «В сборке, ожидает разрешения».")
 
-        created_invoices = get_invoices_by_filters(status_list=["Создан"])
+        created_invoices = get_invoices_by_filters(status_list=["Создан", "Не обрабатывать"])
 
         if created_invoices.empty:
-            st.info("📭 Нет счетов со статусом «Создан». Загрузите новый файл из 1С.")
+            st.info("📭 Нет счетов. Загрузите новый файл из 1С.")
         else:
             rename_map_created = {
                 'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
                 'client': 'Клиент', 'warehouse': 'Склад', 'perm_rb': 'Разрешение РБ',
                 'perm_kz': 'Разрешение КЗ', 'plan_ship_date': 'Плановая дата отгрузки',
-                'note': 'Примечание',
+                'status': 'Статус', 'note': 'Примечание',
             }
-            disp = created_invoices.rename(columns={k: v for k, v in rename_map_created.items() if k in created_invoices.columns})
-            disp.insert(0, '🗑️ Удалить', False)
-            disp = disp[['🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Разрешение РБ',
-                         'Разрешение КЗ', 'Плановая дата отгрузки', 'Примечание']]
 
-            edited = st.data_editor(
-                disp,
-                column_config={
-                    '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
-                    'ID': st.column_config.NumberColumn(disabled=True),
-                    '№ счета': st.column_config.TextColumn(disabled=True),
-                    'Дата счета': st.column_config.TextColumn(disabled=True),
-                    'Клиент': st.column_config.TextColumn(disabled=True),
-                    'Склад': st.column_config.TextColumn(disabled=True),
-                    'Разрешение РБ': st.column_config.CheckboxColumn(),
-                    'Разрешение КЗ': st.column_config.CheckboxColumn(),
-                    'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
-                    'Примечание': st.column_config.TextColumn(),
-                },
-                use_container_width=True, hide_index=True,
-                num_rows="dynamic", key="editor_created"
-            )
+            vnu_df = created_invoices[created_invoices["warehouse"] == "Внуково"].copy()
+            bridr_df = created_invoices[created_invoices["warehouse"].isin(["Брикета", "Дроздово"])].copy()
 
-            col_c1, col_c2 = st.columns([1, 2])
-            with col_c1:
-                if st.button("🗑️ Удалить отмеченные", key="btn_del_created"):
-                    to_delete = edited[edited['🗑️ Удалить'] == True]
-                    if to_delete.empty:
-                        st.warning("Отметьте счета галочкой в колонке «🗑️ Удалить».")
-                    else:
+            def _render_created_table(df, group_name, group_flag, key_suffix):
+                if df.empty:
+                    st.info(f"📭 {group_name}: нет счетов.")
+                    return
+                st.markdown(f"#### {group_flag} {group_name} ({len(df)} шт.)")
+                disp = df.rename(columns={k: v for k, v in rename_map_created.items() if k in df.columns})
+                disp.insert(0, '🗑️ Удалить', False)
+                available = ['🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
+                             'Статус', 'Разрешение РБ', 'Разрешение КЗ', 'Плановая дата отгрузки', 'Примечание']
+                disp = disp[[c for c in available if c in disp.columns]]
+
+                edited = st.data_editor(
+                    disp,
+                    column_config={
+                        '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
+                        'ID': st.column_config.NumberColumn(disabled=True),
+                        '№ счета': st.column_config.TextColumn(disabled=True),
+                        'Дата счета': st.column_config.TextColumn(disabled=True),
+                        'Клиент': st.column_config.TextColumn(disabled=True),
+                        'Склад': st.column_config.TextColumn(disabled=True),
+                        'Статус': st.column_config.TextColumn(disabled=True),
+                        'Разрешение РБ': st.column_config.CheckboxColumn(),
+                        'Разрешение КЗ': st.column_config.CheckboxColumn(),
+                        'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
+                        'Примечание': st.column_config.TextColumn(),
+                    },
+                    use_container_width=True, hide_index=True,
+                    num_rows="dynamic", key=f"editor_created_{key_suffix}"
+                )
+
+                col_c1, col_c2 = st.columns([1, 2])
+                with col_c1:
+                    if st.button(f"🗑️ Удалить", key=f"btn_del_created_{key_suffix}"):
+                        to_delete = edited[edited['🗑️ Удалить'] == True]
+                        if to_delete.empty:
+                            st.warning("Отметьте счета галочкой «🗑️ Удалить».")
+                        else:
+                            for _, row in to_delete.iterrows():
+                                delete_invoice_by_id(int(row['ID']))
+                            st.success(f"✅ Удалено: {len(to_delete)}")
+                            st.rerun()
+                with col_c2:
+                    if st.button(f"💾 Сохранить и распределить", type="primary", key=f"btn_created_{key_suffix}"):
+                        to_delete = edited[edited['🗑️ Удалить'] == True]
                         for _, row in to_delete.iterrows():
                             delete_invoice_by_id(int(row['ID']))
-                        st.success(f"✅ Удалено счетов: {len(to_delete)}")
+                        to_save = edited[edited['🗑️ Удалить'] != True].drop(columns=['🗑️ Удалить'])
+                        reverse = {v: k for k, v in rename_map_created.items()}
+                        upd = to_save.rename(columns=reverse)
+                        # Меняем статус только у «Создан»; «Не обрабатывать» оставляем как есть
+                        def _new_status(row):
+                            if row.get('status') == "Не обрабатывать":
+                                return "Не обрабатывать"
+                            if row.get('perm_rb') or row.get('perm_kz'):
+                                return "В сборке, ожидает разрешения"
+                            return "В сборке"
+                        upd['status'] = upd.apply(_new_status, axis=1)
+                        upd['perm_rb'] = upd['perm_rb'].fillna(0).astype(int)
+                        upd['perm_kz'] = upd['perm_kz'].fillna(0).astype(int)
+                        update_invoices_batch(upd)
+                        deleted_msg = f" Удалено: {len(to_delete)}." if not to_delete.empty else ""
+                        st.success(f"✅ Сохранено!{deleted_msg}")
                         st.rerun()
-            with col_c2:
-                if st.button("💾 Сохранить и распределить", type="primary", key="btn_created"):
-                    # Удаляем отмеченные
-                    to_delete = edited[edited['🗑️ Удалить'] == True]
-                    for _, row in to_delete.iterrows():
-                        delete_invoice_by_id(int(row['ID']))
-                    # Сохраняем остальные
-                    to_save = edited[edited['🗑️ Удалить'] != True].drop(columns=['🗑️ Удалить'])
-                    reverse = {v: k for k, v in rename_map_created.items()}
-                    upd = to_save.rename(columns=reverse)
-                    def _new_status(row):
-                        if row.get('perm_rb') or row.get('perm_kz'):
-                            return "В сборке, ожидает разрешения"
-                        return "В сборке"
-                    upd['status'] = upd.apply(_new_status, axis=1)
-                    upd['perm_rb'] = upd['perm_rb'].fillna(0).astype(int)
-                    upd['perm_kz'] = upd['perm_kz'].fillna(0).astype(int)
-                    update_invoices_batch(upd)
-                    deleted_msg = f" Удалено: {len(to_delete)}." if not to_delete.empty else ""
-                    st.success(f"✅ Сохранено! Счета распределены.{deleted_msg}")
-                    st.rerun()
+                st.markdown("---")
+
+            _render_created_table(vnu_df, "Внуково (РФ)", "🇷🇺", "vnu")
+            _render_created_table(bridr_df, "Брикета + Дроздово (Беларусь)", "🇧🇾", "bridr")
 
     # ---------------- ВКЛАДКА: РАЗРЕШЕНИЯ ----------------
     with tab_permission:
         st.markdown("### 🛡️ Счета, ожидающие разрешения РБ / КЗ")
-        st.caption("Отметьте счета галочками и нажмите «Отправить в сборку» — статус сменится на «В сборке». Можно удалить лишние.")
+        st.caption("Проставьте даты прямо в таблице (раздельно) или массово блоком. Отметьте счета → «Отправить в сборку».")
 
         perm_invoices = get_invoices_by_filters(status_list=["В сборке, ожидает разрешения"])
 
@@ -526,6 +631,15 @@ if current_mode == "Админ-панель" and is_admin:
                 'perm_kz': 'Разрешение КЗ', 'perm_send_date': 'Дата отправки на разрешение',
                 'plan_ship_date': 'Плановая дата отгрузки', 'note': 'Примечание',
             }
+
+            # Блок массовых дат (общий для всех таблиц)
+            st.markdown("#### 📝 Массовые даты (применяются к отмеченным счетам)")
+            col_md1, col_md2 = st.columns(2)
+            with col_md1:
+                mass_perm_send = st.date_input("Дата отправки на разрешение", value=None, key="mass_perm_send")
+            with col_md2:
+                mass_plan_ship = st.date_input("Плановая дата отгрузки", value=None, key="mass_plan_ship_perm")
+            st.markdown("---")
 
             # 4 группы: Внуково РБ, Внуково КЗ, Брикета+Дроздово РБ, Брикета+Дроздово КЗ
             vnu_df = perm_invoices[perm_invoices["warehouse"] == "Внуково"].copy()
@@ -563,8 +677,8 @@ if current_mode == "Админ-панель" and is_admin:
                         'Склад': st.column_config.TextColumn(disabled=True),
                         'Разрешение РБ': st.column_config.CheckboxColumn(disabled=True),
                         'Разрешение КЗ': st.column_config.CheckboxColumn(disabled=True),
-                        'Дата отправки на разрешение': st.column_config.TextColumn(disabled=True),
-                        'Плановая дата отгрузки': st.column_config.TextColumn(disabled=True),
+                        'Дата отправки на разрешение': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
+                        'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
                         'Примечание': st.column_config.TextColumn(),
                     },
                     use_container_width=True, hide_index=True,
@@ -573,6 +687,24 @@ if current_mode == "Админ-панель" and is_admin:
 
                 selected = edited[edited['✅ Отметка'] == True]
                 to_del = edited[edited['🗑️ Удалить'] == True]
+
+                # Кнопка применения массовых дат
+                if st.button(f"📝 Применить даты ({len(selected)} шт.)", key=f"btn_dates_{key_suffix}"):
+                    if selected.empty:
+                        st.warning("Отметьте счета галочками «✅ Отметка».")
+                    else:
+                        send_str = mass_perm_send.strftime('%d.%m.%Y') if mass_perm_send else ""
+                        ship_str = mass_plan_ship.strftime('%d.%m.%Y') if mass_plan_ship else ""
+                        for _, row in selected.iterrows():
+                            update_data = {'id': int(row['ID']), 'perm_rb': 0, 'perm_kz': 0}
+                            if send_str:
+                                update_data['perm_send_date'] = send_str
+                            if ship_str:
+                                update_data['plan_ship_date'] = ship_str
+                            update_invoices_batch(pd.DataFrame([update_data]))
+                        st.success(f"✅ Даты применены к {len(selected)} счетам.")
+                        st.rerun()
+
                 col_p1, col_p2 = st.columns([1, 2])
                 with col_p1:
                     if st.button(f"🗑️ Удалить ({len(to_del)} шт.)", key=f"btn_del_perm_{key_suffix}"):
@@ -584,13 +716,20 @@ if current_mode == "Админ-панель" and is_admin:
                             st.success(f"✅ Удалено: {len(to_del)} счетов.")
                             st.rerun()
                 with col_p2:
+                    # Сохраняем даты, проставленные в таблице + отправляем в сборку
                     if st.button(f"🔧 Отправить в сборку ({len(selected)} шт.)", type="primary", key=f"btn_perm_{key_suffix}"):
                         if selected.empty:
                             st.warning("Отметьте счета галочками «✅ Отметка».")
                         else:
-                            for _, row in selected.iterrows():
-                                update_invoice_status(int(row['ID']), "В сборке")
-                            st.success(f"✅ {len(selected)} счетов отправлены в сборку.")
+                            # Сохраняем даты из таблицы и меняем статус
+                            to_send = selected.drop(columns=['✅ Отметка', '🗑️ Удалить'])
+                            reverse = {v: k for k, v in rename_map_perm.items()}
+                            upd = to_send.rename(columns=reverse)
+                            upd['status'] = "В сборке"
+                            upd['perm_rb'] = 0
+                            upd['perm_kz'] = 0
+                            update_invoices_batch(upd)
+                            st.success(f"✅ {len(upd)} счетов отправлены в сборку (даты сохранены).")
                             st.rerun()
                 st.markdown("---")
 
@@ -790,7 +929,13 @@ if current_mode == "Админ-панель" and is_admin:
                     rkz_number=rkzs,
                     estimated_arrival=new_est_arrival.strftime('%d.%m.%Y'),
                 )
-                st.success(f"✅ Авто #{auto_id} добавлено.")
+                # Автоматически привязываем счета по № РКЗ и ПкЦБ
+                linked_rkz = link_auto_to_invoices_by_rkz(auto_id, [r for r in rkzs.split("\n") if r.strip()])
+                linked_pkcb = link_auto_to_invoices_by_pkcb(auto_id, [d for d in docs.split("\n") if d.strip()])
+                msg = f"✅ Авто #{auto_id} добавлено."
+                if linked_rkz or linked_pkcb:
+                    msg += f" Привязано счетов: {linked_rkz} (по РКЗ) + {linked_pkcb} (по ПкЦБ)."
+                st.success(msg)
                 st.rerun()
 
         # Список авто в пути
@@ -829,7 +974,13 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_rkz_clean = "\n".join([d.strip() for d in edit_rkz.split("\n") if d.strip()])
                         update_car(car_id, edit_dispatch, edit_country, edit_location,
                                    edit_docs_clean, edit_rkz_clean, edit_est_arrival)
-                        st.success(f"✅ Данные авто #{car_id} обновлены.")
+                        # Перепривязываем счета по обновлённым РКЗ/ПкЦБ
+                        linked_rkz = link_auto_to_invoices_by_rkz(car_id, [r for r in edit_rkz_clean.split("\n") if r.strip()])
+                        linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()])
+                        msg = f"✅ Данные авто #{car_id} обновлены."
+                        if linked_rkz or linked_pkcb:
+                            msg += f" Доп. привязано счетов: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
+                        st.success(msg)
                         st.rerun()
 
                     st.markdown("---")
@@ -934,6 +1085,32 @@ if current_mode == "Админ-панель" and is_admin:
                     deleted_msg = f" Удалено: {len(to_del)}." if not to_del.empty else ""
                     st.success(f"✅ Сохранено!{deleted_msg}")
                     st.rerun()
+
+            # ---- Блок email-рассылки ----
+            st.markdown("---")
+            st.markdown("### 📬 Email-рассылка")
+            st.caption("Отправить уведомление получателям. Список адресов берётся из st.secrets['email']['notify_emails'] (или введите вручную).")
+
+            col_e1, col_e2, col_e3 = st.columns([2, 1, 1])
+            with col_e1:
+                notify_emails = st.text_input(
+                    "Email получателей (через запятую):",
+                    value="",
+                    key="almaty_notify_emails",
+                    help="Если пусто — используется список из st.secrets"
+                )
+            with col_e2:
+                if st.button("📬 «Прибыл на склад Алматы»", key="btn_email_arrived"):
+                    with st.spinner("Отправка..."):
+                        ok = send_status_email("Прибыл на склад Алматы", notify_emails)
+                    if ok:
+                        st.success("✅ Письмо отправлено!")
+            with col_e3:
+                if st.button("📬 «Готов к отгрузке»", key="btn_email_ready"):
+                    with st.spinner("Отправка..."):
+                        ok = send_status_email("Готов к отгрузке клиенту", notify_emails)
+                    if ok:
+                        st.success("✅ Письмо отправлено!")
 
     st.stop()
 
