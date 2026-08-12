@@ -180,40 +180,63 @@ def get_all_invoices():
 
 
 def update_invoices_batch(df_updates):
-    """Массовое обновление счетов по id (включая новые поля)."""
+    """
+    Массовое обновление счетов по id.
+    Обновляет ТОЛЬКО поля, присутствующие в df_updates.
+    Значение None (или NaN) трактуется как «не обновлять» (пропускается),
+    чтобы не затирать существующие данные. Для обнуления используйте пустую строку.
+    """
+    if df_updates is None or df_updates.empty:
+        return
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    allowed_fields = [
+        'pkcb', 'perm_rb', 'perm_kz', 'note',
+        'plan_ship_date', 'fact_ship_date', 'transit_days',
+        'plan_arrival', 'fact_arrival', 'status',
+        'perm_send_date', 'trip_name',
+        'order_number', 'rated_date', 'trip_date',
+        'delivery_date_to_client', 'rzc_number', 'auto_id',
+    ]
+    present_fields = [f for f in allowed_fields if f in df_updates.columns]
+    if not present_fields:
+        conn.close()
+        return
+
     for _, row in df_updates.iterrows():
-        cursor.execute('''
-        UPDATE invoices SET
-            pkcb = ?, perm_rb = ?, perm_kz = ?, note = ?,
-            plan_ship_date = ?, fact_ship_date = ?, transit_days = ?,
-            plan_arrival = ?, fact_arrival = ?, status = ?,
-            perm_send_date = ?, trip_name = ?,
-            order_number = ?, rated_date = ?, trip_date = ?,
-            delivery_date_to_client = ?, rzc_number = ?, auto_id = ?
-        WHERE id = ?
-        ''', (
-            row.get('pkcb'),
-            int(row.get('perm_rb', 0) or 0),
-            int(row.get('perm_kz', 0) or 0),
-            row.get('note'),
-            row.get('plan_ship_date'),
-            row.get('fact_ship_date'),
-            row.get('transit_days'),
-            row.get('plan_arrival'),
-            row.get('fact_arrival'),
-            row.get('status'),
-            row.get('perm_send_date'),
-            row.get('trip_name'),
-            row.get('order_number'),
-            row.get('rated_date'),
-            row.get('trip_date'),
-            row.get('delivery_date_to_client'),
-            row.get('rzc_number'),
-            row.get('auto_id'),
-            int(row.get('id') or 0),
-        ))
+        # Собираем только поля с непустыми значениями для этой строки
+        set_parts = []
+        values = []
+        for f in present_fields:
+            v = row.get(f)
+            # NaN → None
+            if v is not None and isinstance(v, float) and pd.isna(v):
+                v = None
+            # None — пропускаем (не обновляем)
+            if v is None:
+                continue
+            # Пустая строка → None (для обнуления поля)
+            if v == "":
+                v = None
+            if f in ('perm_rb', 'perm_kz') and v is not None:
+                try:
+                    v = int(v)
+                except (ValueError, TypeError):
+                    v = 0
+            if f == 'auto_id' and v is not None:
+                try:
+                    v = int(v)
+                except (ValueError, TypeError):
+                    v = None
+                    if v is None:
+                        continue
+            set_parts.append(f"{f} = ?")
+            values.append(v)
+        if not set_parts:
+            continue
+        sql = f"UPDATE invoices SET {', '.join(set_parts)} WHERE id = ?"
+        values.append(int(row.get('id') or 0))
+        cursor.execute(sql, values)
     conn.commit()
     conn.close()
 
