@@ -316,6 +316,29 @@ def mark_car_arrived(car_id, fact_arrival_date):
     """Отмечает авто как прибывшее и переносит связанные счета в 'Прибыл на склад Алматы'."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    # Сначала привязываем счета по № РКЗ (если есть в авто)
+    cursor.execute("SELECT rkz_number, doc_number FROM auto_in_transit WHERE id = ?", (car_id,))
+    row = cursor.fetchone()
+    if row:
+        rkz_str, pkcb_str = row
+        # Привязываем по РКЗ
+        if rkz_str:
+            rkz_list = [r.strip() for r in rkz_str.split("\n") if r.strip()]
+            for rkz in rkz_list:
+                cursor.execute(
+                    "UPDATE invoices SET auto_id = ? WHERE doc_number = ? "
+                    "AND status IN ('В пути', 'В сборке')",
+                    (car_id, rkz)
+                )
+        # Если РКЗ не привязал — пробуем по ПкЦБ
+        if pkcb_str:
+            pkcb_list = [p.strip() for p in pkcb_str.split("\n") if p.strip()]
+            for pkcb in pkcb_list:
+                cursor.execute(
+                    "UPDATE invoices SET auto_id = ? WHERE pkcb = ? "
+                    "AND status IN ('В пути', 'В сборке') AND auto_id IS NULL",
+                    (car_id, pkcb)
+                )
     # Отмечаем авто
     cursor.execute(
         "UPDATE auto_in_transit SET is_arrived = 1, fact_arrival_date = ?, log_status = 'Прибыл' WHERE id = ?",
@@ -356,3 +379,89 @@ def update_car(car_id, dispatch_date, country, location, doc_number,
           estimated_arrival, car_id))
     conn.commit()
     conn.close()
+
+
+# ========== СВЯЗЬ АВТО СО СЧЕТАМИ ПО № РКЗ ==========
+
+def link_auto_to_invoices_by_rkz(car_id, rkz_numbers):
+    """
+    Привязывает счета к авто по совпадению № РКЗ (doc_number).
+    rkz_numbers — список строк (СЧКЗ-...), по одному в элементе.
+    Возвращает: количество привязанных счетов.
+    """
+    if not rkz_numbers:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cleaned = [str(r).strip() for r in rkz_numbers if r and str(r).strip()]
+    if not cleaned:
+        conn.close()
+        return 0
+    # Привязываем счета, у которых doc_number есть в списке РКЗ авто
+    placeholders = ",".join("?" * len(cleaned))
+    cursor.execute(
+        f"UPDATE invoices SET auto_id = ? WHERE doc_number IN ({placeholders}) "
+        f"AND status IN ('В пути', 'В сборке')",
+        [car_id] + cleaned
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers):
+    """
+    Привязывает счета к авто по совпадению ПкЦБ.
+    pkcb_numbers — список строк (ПкЦБ-...), по одному в элементе.
+    Возвращает: количество привязанных счетов.
+    """
+    if not pkcb_numbers:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cleaned = [str(p).strip() for p in pkcb_numbers if p and str(p).strip()]
+    if not cleaned:
+        conn.close()
+        return 0
+    placeholders = ",".join("?" * len(cleaned))
+    cursor.execute(
+        f"UPDATE invoices SET auto_id = ? WHERE pkcb IN ({placeholders}) "
+        f"AND status IN ('В пути', 'В сборке')",
+        [car_id] + cleaned
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def get_invoices_by_status_list(status_list):
+    """Возвращает счета по списку статусов (псевдоним get_invoices_by_filters)."""
+    return get_invoices_by_filters(status_list=status_list)
+
+
+def get_car_invoices_count(car_id):
+    """Количество счетов, привязанных к авто."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM invoices WHERE auto_id = ?", (car_id,))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_invoices_for_email(status):
+    """
+    Возвращает счета для email-рассылки по статусу.
+    Используется при 'Прибыл на склад Алматы' и 'Готов к отгрузке клиенту'.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(
+        """SELECT doc_number, invoice_date, client, warehouse, status,
+                  fact_arrival, rated_date
+           FROM invoices WHERE status = ? ORDER BY timestamp DESC""",
+        conn, params=(status,)
+    )
+    conn.close()
+    return df
