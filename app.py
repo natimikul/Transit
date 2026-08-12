@@ -513,7 +513,7 @@ if current_mode == "Админ-панель" and is_admin:
     # ---------------- ВКЛАДКА: РАЗРЕШЕНИЯ ----------------
     with tab_permission:
         st.markdown("### 🛡️ Счета, ожидающие разрешения РБ / КЗ")
-        st.caption("Отметьте счета галочками и нажмите «Отправить в сборку» — статус сменится на «В сборке».")
+        st.caption("Отметьте счета галочками и нажмите «Отправить в сборку» — статус сменится на «В сборке». Можно удалить лишние.")
 
         perm_invoices = get_invoices_by_filters(status_list=["В сборке, ожидает разрешения"])
 
@@ -527,18 +527,26 @@ if current_mode == "Админ-панель" and is_admin:
                 'plan_ship_date': 'Плановая дата отгрузки', 'note': 'Примечание',
             }
 
-            # Разделение на 2 группы
+            # 4 группы: Внуково РБ, Внуково КЗ, Брикета+Дроздово РБ, Брикета+Дроздово КЗ
             vnu_df = perm_invoices[perm_invoices["warehouse"] == "Внуково"].copy()
             bridr_df = perm_invoices[perm_invoices["warehouse"].isin(["Брикета", "Дроздово"])].copy()
 
-            def _render_perm_table(df, group_name, group_flag, key_suffix):
+            groups = [
+                (vnu_df[vnu_df["perm_rb"] == 1].copy(), "🇷🇺 Внуково — разрешение РБ", "vnu_rb"),
+                (vnu_df[vnu_df["perm_kz"] == 1].copy(), "🇷🇺 Внуково — разрешение КЗ", "vnu_kz"),
+                (bridr_df[bridr_df["perm_rb"] == 1].copy(), "🇧🇾 Брикета+Дроздово — разрешение РБ", "bridr_rb"),
+                (bridr_df[bridr_df["perm_kz"] == 1].copy(), "🇧🇾 Брикета+Дроздово — разрешение КЗ", "bridr_kz"),
+            ]
+
+            def _render_perm_table(df, group_name, key_suffix):
                 if df.empty:
-                    st.info(f"📭 {group_name}: нет счетов, ожидающих разрешения.")
+                    st.info(f"📭 {group_name}: нет счетов.")
                     return
-                st.markdown(f"#### {group_flag} {group_name} ({len(df)} шт.)")
+                st.markdown(f"#### {group_name} ({len(df)} шт.)")
                 disp = df.rename(columns={k: v for k, v in rename_map_perm.items() if k in df.columns})
                 disp.insert(0, '✅ Отметка', False)
-                available = ['✅ Отметка', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
+                disp.insert(1, '🗑️ Удалить', False)
+                available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                               'Разрешение РБ', 'Разрешение КЗ', 'Дата отправки на разрешение',
                               'Плановая дата отгрузки', 'Примечание']
                 disp = disp[[c for c in available if c in disp.columns]]
@@ -547,6 +555,7 @@ if current_mode == "Админ-панель" and is_admin:
                     disp,
                     column_config={
                         '✅ Отметка': st.column_config.CheckboxColumn(),
+                        '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
                         'ID': st.column_config.NumberColumn(disabled=True),
                         '№ счета': st.column_config.TextColumn(disabled=True),
                         'Дата счета': st.column_config.TextColumn(disabled=True),
@@ -563,25 +572,35 @@ if current_mode == "Админ-панель" and is_admin:
                 )
 
                 selected = edited[edited['✅ Отметка'] == True]
-                if st.button(f"🔧 Отправить в сборку ({len(selected)} шт.)", type="primary", key=f"btn_perm_{key_suffix}"):
-                    if selected.empty:
-                        st.warning("Отметьте счета галочками.")
-                    else:
-                        for _, row in selected.iterrows():
-                            update_invoice_status(int(row['ID']), "В сборке")
-                        st.success(f"✅ {len(selected)} счетов отправлены в сборку.")
-                        st.rerun()
+                to_del = edited[edited['🗑️ Удалить'] == True]
+                col_p1, col_p2 = st.columns([1, 2])
+                with col_p1:
+                    if st.button(f"🗑️ Удалить ({len(to_del)} шт.)", key=f"btn_del_perm_{key_suffix}"):
+                        if to_del.empty:
+                            st.warning("Отметьте счета галочкой «🗑️ Удалить».")
+                        else:
+                            for _, row in to_del.iterrows():
+                                delete_invoice_by_id(int(row['ID']))
+                            st.success(f"✅ Удалено: {len(to_del)} счетов.")
+                            st.rerun()
+                with col_p2:
+                    if st.button(f"🔧 Отправить в сборку ({len(selected)} шт.)", type="primary", key=f"btn_perm_{key_suffix}"):
+                        if selected.empty:
+                            st.warning("Отметьте счета галочками «✅ Отметка».")
+                        else:
+                            for _, row in selected.iterrows():
+                                update_invoice_status(int(row['ID']), "В сборке")
+                            st.success(f"✅ {len(selected)} счетов отправлены в сборку.")
+                            st.rerun()
+                st.markdown("---")
 
-            col_perm1, col_perm2 = st.columns(2)
-            with col_perm1:
-                _render_perm_table(vnu_df, "Внуково (РФ)", "🇷🇺", "vnu")
-            with col_perm2:
-                _render_perm_table(bridr_df, "Брикета + Дроздово (Беларусь)", "🇧🇾", "bridr")
+            for df_group, name, suffix in groups:
+                _render_perm_table(df_group, name, suffix)
 
     # ---------------- ВКЛАДКА: В СБОРКЕ ----------------
     with tab_assembly:
         st.markdown("### 🔧 Счета в сборке")
-        st.caption("Отметьте счета галочками → заполните массовые параметры → «Применить к отмеченным». Затем «Отправить в путь».")
+        st.caption("Отметьте счета → заполните массовые параметры → «Применить». Затем назначьте авто и «Отправить в путь».")
 
         assembly_invoices = get_invoices_by_filters(status_list=["В сборке"])
 
@@ -610,6 +629,15 @@ if current_mode == "Админ-панель" and is_admin:
                 mass_transit = st.number_input("Транзит (дней)", min_value=0, max_value=30, value=8, step=1, key="mass_transit")
             st.markdown("---")
 
+            # Получаем список активных авто для назначения
+            active_cars_list = get_active_cars()
+            car_options = ["— не назначать —"]
+            car_ids = [0]
+            for _, c in active_cars_list.iterrows():
+                label = f"#{c['id']} | {c.get('dispatch_date', '-')} | {c.get('location', '-')} | {c.get('country', '-')}"
+                car_options.append(label)
+                car_ids.append(c['id'])
+
             def _render_assembly_table(df, group_name, group_flag, key_suffix):
                 if df.empty:
                     st.info(f"📭 {group_name}: нет счетов в сборке.")
@@ -617,7 +645,8 @@ if current_mode == "Админ-панель" and is_admin:
                 st.markdown(f"#### {group_flag} {group_name} ({len(df)} шт.)")
                 disp = df.rename(columns={k: v for k, v in rename_map_asm.items() if k in df.columns})
                 disp.insert(0, '✅ Отметка', False)
-                available = ['✅ Отметка', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
+                disp.insert(1, '🗑️ Удалить', False)
+                available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
                               'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Транзит (дней)',
                               'Плановая дата прибытия', 'Примечание']
                 disp = disp[[c for c in available if c in disp.columns]]
@@ -626,6 +655,7 @@ if current_mode == "Админ-панель" and is_admin:
                     disp,
                     column_config={
                         '✅ Отметка': st.column_config.CheckboxColumn(),
+                        '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
                         'ID': st.column_config.NumberColumn(disabled=True),
                         '№ счета': st.column_config.TextColumn(disabled=True),
                         'Дата счета': st.column_config.TextColumn(disabled=True),
@@ -643,14 +673,25 @@ if current_mode == "Админ-панель" and is_admin:
                 )
 
                 selected = edited[edited['✅ Отметка'] == True]
+                to_del = edited[edited['🗑️ Удалить'] == True]
+
+                # Кнопка удаления
+                if st.button(f"🗑️ Удалить ({len(to_del)} шт.)", key=f"btn_del_asm_{key_suffix}"):
+                    if to_del.empty:
+                        st.warning("Отметьте счета галочкой «🗑️ Удалить».")
+                    else:
+                        for _, row in to_del.iterrows():
+                            delete_invoice_by_id(int(row['ID']))
+                        st.success(f"✅ Удалено: {len(to_del)} счетов.")
+                        st.rerun()
+
                 # Кнопка применения массовых параметров
                 if st.button(f"📝 Применить параметры ({len(selected)} шт.)", key=f"btn_apply_{key_suffix}"):
                     if selected.empty:
-                        st.warning("Отметьте счета галочками.")
+                        st.warning("Отметьте счета галочками «✅ Отметка».")
                     else:
                         ship_str = mass_fact_ship.strftime('%d.%m.%Y') if mass_fact_ship else ""
                         for _, row in selected.iterrows():
-                            # Обновляем только заполненные параметры
                             update_data = {'id': int(row['ID']), 'perm_rb': 0, 'perm_kz': 0}
                             if ship_str:
                                 update_data['fact_ship_date'] = ship_str
@@ -658,57 +699,72 @@ if current_mode == "Админ-панель" and is_admin:
                                 update_data['pkcb'] = mass_pkcb
                             if mass_transit:
                                 update_data['transit_days'] = int(mass_transit)
-                            # Считаем плановую дату прибытия
                             if ship_str and mass_transit:
                                 try:
                                     ship_dt = pd.to_datetime(ship_str, format='%d.%m.%Y')
                                     update_data['plan_arrival'] = (ship_dt + pd.Timedelta(days=int(mass_transit))).strftime('%d.%m.%Y')
                                 except Exception:
                                     pass
-                            # Обновляем по одному, формируя мини-batch
                             update_invoices_batch(pd.DataFrame([update_data]))
                         st.success(f"✅ Параметры применены к {len(selected)} счетам.")
                         st.rerun()
 
-                # Кнопка отправки в путь
-                if st.button(f"🚛 Отправить в путь ({len(selected)} шт.)", type="primary", key=f"btn_send_{key_suffix}"):
-                    if selected.empty:
-                        st.warning("Отметьте счета галочками.")
-                    else:
-                        to_send = selected.drop(columns=['✅ Отметка'])
-                        reverse = {v: k for k, v in rename_map_asm.items()}
-                        upd = to_send.rename(columns=reverse)
-                        def _calc_arrival(row):
-                            ship_date_str = str(row.get('fact_ship_date', '')).strip()
-                            transit = row.get('transit_days')
-                            if not ship_date_str or not transit:
+                # Назначение авто и отправка в путь
+                st.markdown(f"**🚛 Назначить авто для отправки в путь:**")
+                col_car, col_btn = st.columns([3, 1])
+                with col_car:
+                    chosen_idx = st.selectbox(
+                        "Выберите авто:",
+                        range(len(car_options)),
+                        format_func=lambda i: car_options[i],
+                        key=f"car_select_{key_suffix}"
+                    )
+                with col_btn:
+                    if st.button(f"🚛 Отправить в путь ({len(selected)} шт.)", type="primary", key=f"btn_send_{key_suffix}"):
+                        if selected.empty:
+                            st.warning("Отметьте счета галочками «✅ Отметка».")
+                        else:
+                            to_send = selected.drop(columns=['✅ Отметка', '🗑️ Удалить'])
+                            reverse = {v: k for k, v in rename_map_asm.items()}
+                            upd = to_send.rename(columns=reverse)
+                            def _calc_arrival(row):
+                                ship_date_str = str(row.get('fact_ship_date', '')).strip()
+                                transit = row.get('transit_days')
+                                if not ship_date_str or not transit:
+                                    return ""
+                                try:
+                                    ship_dt = pd.to_datetime(ship_date_str, format='%d.%m.%Y', errors='coerce')
+                                    if pd.isna(ship_dt):
+                                        ship_dt = pd.to_datetime(ship_date_str, errors='coerce')
+                                    if pd.notna(ship_dt):
+                                        return (ship_dt + pd.Timedelta(days=int(transit))).strftime('%d.%m.%Y')
+                                except Exception:
+                                    pass
                                 return ""
-                            try:
-                                ship_dt = pd.to_datetime(ship_date_str, format='%d.%m.%Y', errors='coerce')
-                                if pd.isna(ship_dt):
-                                    ship_dt = pd.to_datetime(ship_date_str, errors='coerce')
-                                if pd.notna(ship_dt):
-                                    return (ship_dt + pd.Timedelta(days=int(transit))).strftime('%d.%m.%Y')
-                            except Exception:
-                                pass
-                            return ""
-                        upd['plan_arrival'] = upd.apply(_calc_arrival, axis=1)
-                        upd['status'] = "В пути"
-                        upd['perm_rb'] = 0
-                        upd['perm_kz'] = 0
-                        update_invoices_batch(upd)
-                        st.success(f"✅ {len(upd)} счетов переведены в «В пути».")
-                        st.rerun()
+                            upd['plan_arrival'] = upd.apply(_calc_arrival, axis=1)
+                            upd['status'] = "В пути"
+                            upd['perm_rb'] = 0
+                            upd['perm_kz'] = 0
+                            # Назначаем авто, если выбрано
+                            chosen_car_id = car_ids[chosen_idx]
+                            if chosen_car_id:
+                                upd['auto_id'] = chosen_car_id
+                            update_invoices_batch(upd)
+                            msg = f"✅ {len(upd)} счетов переведены в «В пути»."
+                            if chosen_car_id:
+                                msg += f" Назначено авто #{chosen_car_id}."
+                            st.success(msg)
+                            st.rerun()
+                st.markdown("---")
                 return edited
 
-            vnu_edited = _render_assembly_table(vnu_df, "Внуково (РФ)", "🇷🇺", "vnu")
-            st.markdown("---")
-            bridr_edited = _render_assembly_table(bridr_df, "Брикета + Дроздово (Беларусь)", "🇧🇾", "bridr")
+            _render_assembly_table(vnu_df, "Внуково (РФ)", "🇷🇺", "vnu")
+            _render_assembly_table(bridr_df, "Брикета + Дроздово (Беларусь)", "🇧🇾", "bridr")
 
     # ---------------- ВКЛАДКА: В ПУТИ (АВТО) ----------------
     with tab_transit:
         st.markdown("### 🚛 Авто в пути (вкладка «Пополн»)")
-        st.caption("Создайте авто, отметьте прибытие — счета автоматически перейдут в «Прибыл на склад Алматы».")
+        st.caption("Создайте авто, дополните данные, отметьте прибытие — счета автоматически перейдут в «Прибыл на склад Алматы».")
 
         # Создание нового авто
         with st.expander("➕ Добавить авто", expanded=False):
@@ -753,6 +809,32 @@ if current_mode == "Админ-панель" and is_admin:
                     docs_list = [d.strip() for d in str(car.get('doc_number', '')).split("\n") if d.strip()]
                     rkz_list = [d.strip() for d in str(car.get('rkz_number', '')).split("\n") if d.strip()]
 
+                    # ---- Редактирование данных авто ----
+                    st.markdown("**📝 Редактировать данные авто:**")
+                    col_e1, col_e2, col_e3 = st.columns(3)
+                    with col_e1:
+                        edit_dispatch = st.text_input("Дата отгрузки", value=car.get('dispatch_date', ''), key=f"edit_dispatch_{car_id}")
+                        edit_country = st.text_input("Страна", value=car.get('country', ''), key=f"edit_country_{car_id}")
+                    with col_e2:
+                        edit_location = st.text_input("Локация", value=car.get('location', ''), key=f"edit_location_{car_id}")
+                        edit_est_arrival = st.text_input("Плановая дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
+                    with col_e3:
+                        edit_docs = st.text_area("№ документов (ПкЦБ) — по одному в строке",
+                                                  value="\n".join(docs_list), key=f"edit_docs_{car_id}", height=80)
+                        edit_rkz = st.text_area("№ РКЗ (СЧКЗ) — по одному в строке",
+                                                  value="\n".join(rkz_list), key=f"edit_rkz_{car_id}", height=80)
+
+                    if st.button("💾 Сохранить изменения авто", key=f"btn_save_edit_car_{car_id}"):
+                        edit_docs_clean = "\n".join([d.strip() for d in edit_docs.split("\n") if d.strip()])
+                        edit_rkz_clean = "\n".join([d.strip() for d in edit_rkz.split("\n") if d.strip()])
+                        update_car(car_id, edit_dispatch, edit_country, edit_location,
+                                   edit_docs_clean, edit_rkz_clean, edit_est_arrival)
+                        st.success(f"✅ Данные авто #{car_id} обновлены.")
+                        st.rerun()
+
+                    st.markdown("---")
+
+                    # ---- Просмотр документов ----
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
                         st.caption(f"📋 ПкЦБ ({len(docs_list)}):")
@@ -763,7 +845,10 @@ if current_mode == "Админ-панель" and is_admin:
                         if rkz_list:
                             st.code("\n".join(rkz_list), language="")
 
-                    # Отметка прибытия
+                    st.markdown("---")
+
+                    # ---- Отметка прибытия ----
+                    st.markdown("**✅ Отметка прибытия:**")
                     col_arr1, col_arr2, col_arr3 = st.columns([2, 1, 1])
                     with col_arr1:
                         fact_arr = st.date_input(f"Фактическая дата прибытия авто #{car_id}", key=f"fact_arr_{car_id}")
@@ -795,13 +880,15 @@ if current_mode == "Админ-панель" and is_admin:
                 'rated_date': 'Расценен', 'status': 'Статус', 'note': 'Примечание',
             }
             disp = almaty_invoices.rename(columns={k: v for k, v in rename_map_alm.items() if k in almaty_invoices.columns})
-            available = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия',
+            disp.insert(0, '🗑️ Удалить', False)
+            available = [c for c in ['🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия',
                                       'Расценен', 'Статус', 'Примечание'] if c in disp.columns]
             disp = disp[available]
 
             edited = st.data_editor(
                 disp,
                 column_config={
+                    '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
                     'ID': st.column_config.NumberColumn(disabled=True),
                     '№ счета': st.column_config.TextColumn(disabled=True),
                     'Дата счета': st.column_config.TextColumn(disabled=True),
@@ -819,18 +906,34 @@ if current_mode == "Админ-панель" and is_admin:
                 num_rows="dynamic", key="editor_almaty"
             )
 
-            if st.button("💾 Сохранить", type="primary", key="btn_almaty"):
-                reverse = {v: k for k, v in rename_map_alm.items()}
-                upd = edited.rename(columns=reverse)
-                # Статус зависит от заполненности «Расценен»
-                def _alm_status(rated):
-                    return "Готов к отгрузке клиенту" if str(rated).strip() else "Прибыл на склад Алматы"
-                upd['status'] = upd['rated_date'].apply(_alm_status)
-                upd['perm_rb'] = 0
-                upd['perm_kz'] = 0
-                update_invoices_batch(upd)
-                st.success("✅ Сохранено! Счета с датой «Расценен» → «Готов к отгрузке клиенту».")
-                st.rerun()
+            col_a1, col_a2 = st.columns([1, 2])
+            with col_a1:
+                to_del = edited[edited['🗑️ Удалить'] == True]
+                if st.button("🗑️ Удалить отмеченные", key="btn_del_almaty"):
+                    if to_del.empty:
+                        st.warning("Отметьте счета галочкой «🗑️ Удалить».")
+                    else:
+                        for _, row in to_del.iterrows():
+                            delete_invoice_by_id(int(row['ID']))
+                        st.success(f"✅ Удалено: {len(to_del)} счетов.")
+                        st.rerun()
+            with col_a2:
+                if st.button("💾 Сохранить", type="primary", key="btn_almaty"):
+                    to_del = edited[edited['🗑️ Удалить'] == True]
+                    for _, row in to_del.iterrows():
+                        delete_invoice_by_id(int(row['ID']))
+                    to_save = edited[edited['🗑️ Удалить'] != True].drop(columns=['🗑️ Удалить'])
+                    reverse = {v: k for k, v in rename_map_alm.items()}
+                    upd = to_save.rename(columns=reverse)
+                    def _alm_status(rated):
+                        return "Готов к отгрузке клиенту" if str(rated).strip() else "Прибыл на склад Алматы"
+                    upd['status'] = upd['rated_date'].apply(_alm_status)
+                    upd['perm_rb'] = 0
+                    upd['perm_kz'] = 0
+                    update_invoices_batch(upd)
+                    deleted_msg = f" Удалено: {len(to_del)}." if not to_del.empty else ""
+                    st.success(f"✅ Сохранено!{deleted_msg}")
+                    st.rerun()
 
     st.stop()
 
