@@ -696,7 +696,7 @@ if current_mode == "Админ-панель" and is_admin:
                         send_str = mass_perm_send.strftime('%d.%m.%Y') if mass_perm_send else ""
                         ship_str = mass_plan_ship.strftime('%d.%m.%Y') if mass_plan_ship else ""
                         for _, row in selected.iterrows():
-                            update_data = {'id': int(row['ID']), 'perm_rb': 0, 'perm_kz': 0}
+                            update_data = {'id': int(row['ID'])}
                             if send_str:
                                 update_data['perm_send_date'] = send_str
                             if ship_str:
@@ -831,7 +831,7 @@ if current_mode == "Админ-панель" and is_admin:
                     else:
                         ship_str = mass_fact_ship.strftime('%d.%m.%Y') if mass_fact_ship else ""
                         for _, row in selected.iterrows():
-                            update_data = {'id': int(row['ID']), 'perm_rb': 0, 'perm_kz': 0}
+                            update_data = {'id': int(row['ID'])}
                             if ship_str:
                                 update_data['fact_ship_date'] = ship_str
                             if mass_pkcb:
@@ -866,11 +866,12 @@ if current_mode == "Админ-панель" and is_admin:
                             to_send = selected.drop(columns=['✅ Отметка', '🗑️ Удалить'])
                             reverse = {v: k for k, v in rename_map_asm.items()}
                             upd = to_send.rename(columns=reverse)
+                            # Считаем плановую дату прибытия только если есть дата отгрузки и транзит
                             def _calc_arrival(row):
                                 ship_date_str = str(row.get('fact_ship_date', '')).strip()
                                 transit = row.get('transit_days')
                                 if not ship_date_str or not transit:
-                                    return ""
+                                    return None
                                 try:
                                     ship_dt = pd.to_datetime(ship_date_str, format='%d.%m.%Y', errors='coerce')
                                     if pd.isna(ship_dt):
@@ -879,12 +880,15 @@ if current_mode == "Админ-панель" and is_admin:
                                         return (ship_dt + pd.Timedelta(days=int(transit))).strftime('%d.%m.%Y')
                                 except Exception:
                                     pass
-                                return ""
-                            upd['plan_arrival'] = upd.apply(_calc_arrival, axis=1)
+                                return None
+                            arrival_values = upd.apply(_calc_arrival, axis=1)
+                            # Применяем только непустые значения (чтобы не затирать существующие)
+                            upd['plan_arrival'] = arrival_values
                             upd['status'] = "В пути"
-                            upd['perm_rb'] = 0
-                            upd['perm_kz'] = 0
                             # Назначаем авто, если выбрано
+                            chosen_car_id = car_ids[chosen_idx]
+                            if chosen_car_id:
+                                upd['auto_id'] = chosen_car_id
                             chosen_car_id = car_ids[chosen_idx]
                             if chosen_car_id:
                                 upd['auto_id'] = chosen_car_id
