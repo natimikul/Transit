@@ -363,7 +363,7 @@ st.subheader("📋 Формирование отчетов")
 if is_admin:
     c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm, c8_admin = st.columns(8)
 else:
-    c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm = st.columns(8)
+    c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm = st.columns(7)
 
 if "active_report_mode" not in st.session_state:
     st.session_state.active_report_mode = "Поиск по Клиенту"
