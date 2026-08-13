@@ -1696,7 +1696,6 @@ if current_mode == "Поиск по Клиенту":
 elif current_mode == "Разрешения":
     st.session_state.current_report = build_report(
         cols_no_finance, status_list=["Создан", "В сборке, ожидает разрешения"],
-        source_sheet_list=["КЗ разр", "РБ разр"],
         invoice_text=invoice_input, client_text=client_input,
         start_dt=start_filter, end_dt=end_filter,
         sort_by="Дата счета", sort_ascending=True
@@ -1706,7 +1705,6 @@ elif current_mode == "Разрешения":
 elif current_mode == "В сборке":
     st.session_state.current_report = build_report(
         cols_no_finance, status_list=["Создан", "В сборке"],
-        source_sheet_list=["Вну", "Бри-Дро"],
         invoice_text=invoice_input, client_text=client_input,
         start_dt=start_filter, end_dt=end_filter,
         sort_by="Дата счета", sort_ascending=True
@@ -1716,7 +1714,6 @@ elif current_mode == "В сборке":
 elif current_mode == "Отгружено":
     st.session_state.current_report = build_report(
         cols_all, status_list=["В пути"],
-        source_sheet_list=["Вну", "Бри-Дро", "КЗ разр", "РБ разр"],
         invoice_text=invoice_input, client_text=client_input,
         start_dt=start_filter, end_dt=end_filter,
         sort_by="Дата отгрузки (факт)", sort_ascending=True
