@@ -32,7 +32,7 @@ STATUS_MAP = {
     "отгружен": "Отгружен",
     "обработан": "Обработан",
     "выгружен в wms": "Выгружен в WMS",
-    "не обрабатывать": "Не обрабатывать",
+    "не обрабатывать": "Создан",
     "отменен": "Отменен",
 }
 
@@ -234,6 +234,129 @@ def import_invoices_to_db(parsed_df, added_by="admin"):
                 "excel_1c",
                 added_by,
             ))
+            saved_count += 1
+
+    conn.commit()
+    conn.close()
+    return saved_count, updated_count, skipped_count
+
+
+def import_db_export(uploaded_file):
+    """
+    Импортирует счета из Excel-экспорта БД (формат db_export.xlsx).
+    Если doc_number уже существует — обновляет.
+    Возвращает: (saved_count, updated_count, skipped_count)
+    """
+    import sqlite3
+    from database import DB_NAME
+
+    df = pd.read_excel(uploaded_file, sheet_name='Счета')
+    if df.empty:
+        return 0, 0, 0
+
+    rename = {
+        '№ счета': 'doc_number', 'Дата счета': 'invoice_date', 'Клиент': 'client',
+        'Склад': 'warehouse', 'ПкЦБ': 'pkcb', 'Статус': 'status',
+        'Плановая дата отгрузки': 'plan_ship_date', 'Дата отгрузки (факт)': 'fact_ship_date',
+        'Транзит (дней)': 'transit_days', 'Плановая дата прибытия': 'plan_arrival',
+        'Дата прибытия (факт)': 'fact_arrival', 'Разрешение РБ': 'perm_rb',
+        'Разрешение КЗ': 'perm_kz', 'Дата отправки на разрешение': 'perm_send_date',
+        'Расценен': 'rated_date', 'Примечание': 'note', '№ заявки': 'order_number',
+        'Источник': 'source_sheet', 'Рейс (отгрузка)': 'final_trip_name',
+        'Дата рейса': 'final_trip_date', 'Дата отгрузки клиенту': 'delivery_date_to_client',
+        'Дата отказа': 'reject_date',
+    }
+    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    saved_count = 0
+    updated_count = 0
+    skipped_count = 0
+
+    for _, row in df.iterrows():
+        doc_number = str(row.get('doc_number', '')).strip()
+        if not doc_number or doc_number == 'nan':
+            skipped_count += 1
+            continue
+
+        def clean(v):
+            if pd.isna(v):
+                return None
+            s = str(v).strip()
+            return s if s and s.lower() != 'nan' else None
+
+        doc_number = clean(doc_number)
+        invoice_date = clean(row.get('invoice_date'))
+        client = clean(row.get('client'))
+        warehouse = clean(row.get('warehouse')) or 'Внуково'
+        pkcb = clean(row.get('pkcb'))
+        status = clean(row.get('status')) or 'Создан'
+        plan_ship_date = clean(row.get('plan_ship_date'))
+        fact_ship_date = clean(row.get('fact_ship_date'))
+        transit_days = clean(row.get('transit_days'))
+        plan_arrival = clean(row.get('plan_arrival'))
+        fact_arrival = clean(row.get('fact_arrival'))
+        rated_date = clean(row.get('rated_date'))
+        note = clean(row.get('note'))
+        order_number = clean(row.get('order_number'))
+        source_sheet = clean(row.get('source_sheet')) or 'ручной'
+        final_trip_name = clean(row.get('final_trip_name'))
+        final_trip_date = clean(row.get('final_trip_date'))
+        delivery_date = clean(row.get('delivery_date_to_client'))
+        reject_date = clean(row.get('reject_date'))
+        perm_send_date = clean(row.get('perm_send_date'))
+        try:
+            perm_rb = int(row.get('perm_rb', 0) or 0)
+        except (ValueError, TypeError):
+            perm_rb = 0
+        try:
+            perm_kz = int(row.get('perm_kz', 0) or 0)
+        except (ValueError, TypeError):
+            perm_kz = 0
+
+        cursor.execute("SELECT id FROM invoices WHERE doc_number = ?", (doc_number,))
+        existing = cursor.fetchone()
+
+        if existing:
+            existing_id = existing[0]
+            cursor.execute('''
+                UPDATE invoices SET
+                    status = ?, invoice_date = ?, client = ?, warehouse = ?, pkcb = ?,
+                    plan_ship_date = ?, fact_ship_date = ?, transit_days = ?,
+                    plan_arrival = ?, fact_arrival = ?, rated_date = ?,
+                    perm_rb = ?, perm_kz = ?, perm_send_date = ?,
+                    note = ?, order_number = ?, source_sheet = ?,
+                    final_trip_name = ?, final_trip_date = ?,
+                    delivery_date_to_client = ?, reject_date = ?
+                WHERE id = ?
+            ''', (status, invoice_date, client, warehouse, pkcb,
+                  plan_ship_date, fact_ship_date, transit_days,
+                  plan_arrival, fact_arrival, rated_date,
+                  perm_rb, perm_kz, perm_send_date,
+                  note, order_number, source_sheet,
+                  final_trip_name, final_trip_date,
+                  delivery_date, reject_date, existing_id))
+            updated_count += 1
+        else:
+            cursor.execute('''
+                INSERT INTO invoices (
+                    doc_number, invoice_date, client, warehouse, pkcb, status,
+                    plan_ship_date, fact_ship_date, transit_days,
+                    plan_arrival, fact_arrival, rated_date,
+                    perm_rb, perm_kz, perm_send_date,
+                    note, order_number, source_sheet, added_by,
+                    final_trip_name, final_trip_date,
+                    delivery_date_to_client, reject_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (doc_number, invoice_date, client, warehouse, pkcb, status,
+                  plan_ship_date, fact_ship_date, transit_days,
+                  plan_arrival, fact_arrival, rated_date,
+                  perm_rb, perm_kz, perm_send_date,
+                  note, order_number, source_sheet, 'db_export',
+                  final_trip_name, final_trip_date,
+                  delivery_date, reject_date))
             saved_count += 1
 
     conn.commit()
