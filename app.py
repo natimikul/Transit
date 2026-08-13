@@ -1432,11 +1432,11 @@ if current_mode == "Админ-панель" and is_admin:
                 'delivery_date_to_client': 'Дата отгрузки клиенту', 'status': 'Статус', 'note': 'Примечание',
             }
             disp = shipped_invoices.rename(columns={k: v for k, v in rename_map_ship.items() if k in shipped_invoices.columns})
-            for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия', 'Рейс (отгрузка)', 'Дата рейса', 'Дата отгрузки клиенту', 'Статус', 'Примечание']:
+            for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия', 'Рейс (отгрузка)', 'Дата рейса', 'Статус', 'Примечание']:
                 if col in disp.columns:
                     disp[col] = disp[col].fillna('').astype(str)
             available = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия',
-                                      'Рейс (отгрузка)', 'Дата рейса', 'Дата отгрузки клиенту', 'Статус', 'Примечание'] if c in disp.columns]
+                                      'Рейс (отгрузка)', 'Дата рейса', 'Статус', 'Примечание'] if c in disp.columns]
             disp = disp[available]
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
@@ -1734,7 +1734,7 @@ elif current_mode == "Прибытие":
     st.session_state.report_name = "Прибытие"
 
 elif current_mode == "Отгрузки Алматы":
-    cols_almaty_delivery = ['№ счета', 'Дата счета', 'Клиент', 'Прибыл (факт)', 'Статус', 'Рейс', 'Дата рейса', 'Дата отгрузки клиенту']
+    cols_almaty_delivery = ['№ счета', 'Дата счета', 'Клиент', 'Прибыл (факт)', 'Статус', 'Рейс', 'Дата рейса']
     st.session_state.current_report = build_report(
         cols_almaty_delivery, status_list=["Отгружено клиенту"],
         invoice_text=invoice_input, client_text=client_input,
