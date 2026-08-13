@@ -13,7 +13,7 @@ import pandas as pd
 import datetime
 from io import BytesIO
 from replenishment import show_replenishment_page
-from excel_import import parse_excel_1c, import_invoices_to_db, import_db_export
+from excel_import import parse_excel_1c, import_invoices_to_db, import_db_export, import_cars_export
 from database import (
     init_db, save_car_to_db, get_all_cars_from_db,
     save_invoice_to_db, get_all_invoices, get_invoices_by_filters,
@@ -493,6 +493,19 @@ if current_mode == "Админ-панель" and is_admin:
                 st.balloons()
             except Exception as e:
                 st.error(f"Не удалось импортировать файл. Ошибка: {e}")
+
+        st.markdown("---")
+        st.markdown("#### 🚛 Импорт авто из файла экспорта (cars_export.xlsx)")
+        st.caption("Загрузите файл cars_export.xlsx с авто (дата отгрузки, страна, ПкЦБ, РКЗ, статус прибытия). Счета привязываются по РКЗ/ПкЦБ автоматически.")
+        uploaded_cars = st.file_uploader("Перетащите cars_export.xlsx:", type=["xlsx", "xls"], key="uploader_cars_export")
+        if uploaded_cars is not None:
+            try:
+                with st.spinner("Импорт авто..."):
+                    saved, updated, skipped = import_cars_export(uploaded_cars)
+                st.success(f"✅ Импорт авто завершён! Новых: {saved}, обновлено: {updated}, пропущено: {skipped}")
+                st.balloons()
+            except Exception as e:
+                st.error(f"Не удалось импортировать файл авто. Ошибка: {e}")
 
     # ---------------- ВКЛАДКА: СОЗДАН ----------------
     with tab_created:
