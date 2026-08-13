@@ -1,0 +1,25 @@
+# Streamlit secrets — НИКОГДА не коммитить
+.streamlit/secrets.toml
+
+# База данных SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Временные файлы Excel
+*.tmp
+~$*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
