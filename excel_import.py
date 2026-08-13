@@ -77,7 +77,10 @@ def parse_excel_1c(uploaded_file):
         client, warehouse, order_number
       stats_dict — словарь со статистикой загрузки.
     """
-    raw_df = pd.read_excel(uploaded_file, header=None)
+    try:
+        raw_df = pd.read_excel(uploaded_file, header=None, engine='xlrd')
+    except Exception:
+        raw_df = pd.read_excel(uploaded_file, header=None)
     raw_df = raw_df.dropna(how="all").reset_index(drop=True)
 
     if raw_df.empty:
