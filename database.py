@@ -74,6 +74,9 @@ def init_db():
     _add_column_if_missing(cursor, "invoices", "rzc_number", "TEXT")
     _add_column_if_missing(cursor, "invoices", "auto_id", "INTEGER")
     _add_column_if_missing(cursor, "invoices", "rated_by", "TEXT")
+    _add_column_if_missing(cursor, "invoices", "final_trip_name", "TEXT")
+    _add_column_if_missing(cursor, "invoices", "final_trip_date", "TEXT")
+    _add_column_if_missing(cursor, "invoices", "reject_date", "TEXT")
 
     conn.commit()
     conn.close()
@@ -197,6 +200,7 @@ def update_invoices_batch(df_updates):
         'perm_send_date', 'trip_name',
         'order_number', 'rated_date', 'trip_date',
         'delivery_date_to_client', 'rzc_number', 'auto_id',
+        'final_trip_name', 'final_trip_date', 'reject_date',
     ]
     present_fields = [f for f in allowed_fields if f in df_updates.columns]
     if not present_fields:
@@ -335,36 +339,46 @@ def get_active_cars():
     return df
 
 
+def get_arrived_cars():
+    """Только авто, которые уже прибыли (для вкладки Алматы)."""
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(
+        "SELECT * FROM auto_in_transit WHERE is_arrived = 1 ORDER BY fact_arrival_date DESC, id DESC",
+        conn
+    )
+    conn.close()
+    return df
+
+
 def mark_car_arrived(car_id, fact_arrival_date):
     """Отмечает авто как прибывшее и переносит связанные счета в 'Прибыл на склад Алматы'."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Сначала привязываем счета по № РКЗ (если есть в авто)
+    link_statuses = ('В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту')
+    status_ph = ",".join("?" * len(link_statuses))
     cursor.execute("SELECT rkz_number, doc_number FROM auto_in_transit WHERE id = ?", (car_id,))
     row = cursor.fetchone()
     if row:
         rkz_str, pkcb_str = row
-        # Привязываем по РКЗ
         if rkz_str:
             rkz_list = [r.strip() for r in rkz_str.split("\n") if r.strip()]
             for rkz in rkz_list:
                 cursor.execute(
-                    "UPDATE invoices SET auto_id = ? WHERE doc_number = ? "
-                    "AND status IN ('В пути', 'В сборке')",
-                    (car_id, rkz)
+                    f"UPDATE invoices SET auto_id = ? WHERE doc_number = ? "
+                    f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+                    [car_id, rkz] + list(link_statuses)
                 )
-        # Если РКЗ не привязал — пробуем по ПкЦБ
         if pkcb_str:
             pkcb_list = [p.strip() for p in pkcb_str.split("\n") if p.strip()]
             for pkcb in pkcb_list:
                 cursor.execute(
-                    "UPDATE invoices SET auto_id = ? WHERE pkcb = ? "
-                    "AND status IN ('В пути', 'В сборке') AND auto_id IS NULL",
-                    (car_id, pkcb)
+                    f"UPDATE invoices SET auto_id = ? WHERE pkcb = ? "
+                    f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+                    [car_id, pkcb] + list(link_statuses)
                 )
     # Отмечаем авто
     cursor.execute(
-        "UPDATE auto_in_transit SET is_arrived = 1, fact_arrival_date = ?, log_status = 'Прибыл' WHERE id = ?",
+        "UPDATE auto_in_transit SET is_arrived = 1, fact_arrival_date = ?, location = 'Алматы', log_status = 'Прибыл' WHERE id = ?",
         (fact_arrival_date, car_id)
     )
     # Переносим связанные счета в статус "Прибыл на склад Алматы"
@@ -406,10 +420,11 @@ def update_car(car_id, dispatch_date, country, location, doc_number,
 
 # ========== СВЯЗЬ АВТО СО СЧЕТАМИ ПО № РКЗ ==========
 
-def link_auto_to_invoices_by_rkz(car_id, rkz_numbers):
+def link_auto_to_invoices_by_rkz(car_id, rkz_numbers, status_list=None):
     """
     Привязывает счета к авто по совпадению № РКЗ (doc_number).
     rkz_numbers — список строк (СЧКЗ-...), по одному в элементе.
+    status_list — список статусов для привязки (по умолчанию 'В пути', 'В сборке').
     Возвращает: количество привязанных счетов.
     """
     if not rkz_numbers:
@@ -420,12 +435,13 @@ def link_auto_to_invoices_by_rkz(car_id, rkz_numbers):
     if not cleaned:
         conn.close()
         return 0
-    # Привязываем счета, у которых doc_number есть в списке РКЗ авто
     placeholders = ",".join("?" * len(cleaned))
+    statuses = status_list if status_list else ['В пути', 'В сборке']
+    status_ph = ",".join("?" * len(statuses))
     cursor.execute(
         f"UPDATE invoices SET auto_id = ? WHERE doc_number IN ({placeholders}) "
-        f"AND status IN ('В пути', 'В сборке')",
-        [car_id] + cleaned
+        f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+        [car_id] + cleaned + statuses
     )
     affected = cursor.rowcount
     conn.commit()
@@ -433,10 +449,11 @@ def link_auto_to_invoices_by_rkz(car_id, rkz_numbers):
     return affected
 
 
-def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers):
+def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers, status_list=None):
     """
     Привязывает счета к авто по совпадению ПкЦБ.
     pkcb_numbers — список строк (ПкЦБ-...), по одному в элементе.
+    status_list — список статусов для привязки (по умолчанию 'В пути', 'В сборке').
     Возвращает: количество привязанных счетов.
     """
     if not pkcb_numbers:
@@ -448,10 +465,12 @@ def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers):
         conn.close()
         return 0
     placeholders = ",".join("?" * len(cleaned))
+    statuses = status_list if status_list else ['В пути', 'В сборке']
+    status_ph = ",".join("?" * len(statuses))
     cursor.execute(
         f"UPDATE invoices SET auto_id = ? WHERE pkcb IN ({placeholders}) "
-        f"AND status IN ('В пути', 'В сборке')",
-        [car_id] + cleaned
+        f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+        [car_id] + cleaned + statuses
     )
     affected = cursor.rowcount
     conn.commit()
@@ -472,6 +491,19 @@ def get_car_invoices_count(car_id):
     count = cursor.fetchone()[0]
     conn.close()
     return count
+
+
+def get_car_invoice_doc_numbers(car_id):
+    """Возвращает список doc_number счетов, привязанных к авто."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT doc_number FROM invoices WHERE auto_id = ? AND doc_number IS NOT NULL AND doc_number != ''",
+        (car_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [r[0] for r in rows if r[0]]
 
 
 def get_invoices_for_email(status):
