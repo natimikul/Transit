@@ -1,6 +1,6 @@
 streamlit
 pandas
 xlsxwriter
-xlrd<2.0.0
+xlrd
 openpyxl
 bcrypt
