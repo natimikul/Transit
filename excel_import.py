@@ -362,3 +362,104 @@ def import_db_export(uploaded_file):
     conn.commit()
     conn.close()
     return saved_count, updated_count, skipped_count
+
+
+def import_cars_export(uploaded_file):
+    """
+    Импортирует авто из Excel-экспорта (cars_export.xlsx).
+    Если авто с таким же dispatch_date + country + doc_number уже есть — обновляет.
+    Также привязывает счета по РКЗ и ПкЦБ.
+    Возвращает: (saved_count, updated_count, skipped_count)
+    """
+    import sqlite3
+    from database import DB_NAME
+
+    df = pd.read_excel(uploaded_file, sheet_name='Авто')
+    if df.empty:
+        return 0, 0, 0
+
+    def clean(v):
+        if pd.isna(v):
+            return ''
+        s = str(v).strip()
+        return s if s and s.lower() != 'nan' else ''
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    saved_count = 0
+    updated_count = 0
+    skipped_count = 0
+
+    for _, row in df.iterrows():
+        dispatch_date = clean(row.get('Дата отгрузки'))
+        country = clean(row.get('Страна'))
+        location = clean(row.get('Локация'))
+        doc_number = clean(row.get('ПкЦБ'))
+        rkz_number = clean(row.get('№ РКЗ'))
+        estimated_arrival = clean(row.get('Плановая дата прибытия'))
+        is_arrived_str = clean(row.get('Прибыл'))
+        is_arrived = 1 if is_arrived_str in ('1', '1.0', 'True', 'true') else 0
+        fact_arrival_date = clean(row.get('Фактическая дата прибытия'))
+
+        if not dispatch_date and not doc_number and not rkz_number:
+            skipped_count += 1
+            continue
+
+        existing_id = None
+        if dispatch_date and country and doc_number:
+            cursor.execute(
+                "SELECT id FROM auto_in_transit WHERE dispatch_date = ? AND country = ? AND doc_number = ?",
+                (dispatch_date, country, doc_number)
+            )
+            res = cursor.fetchone()
+            if res:
+                existing_id = res[0]
+
+        if existing_id:
+            cursor.execute('''
+                UPDATE auto_in_transit SET
+                    dispatch_date = ?, country = ?, location = ?,
+                    doc_number = ?, rkz_number = ?, estimated_arrival = ?,
+                    is_arrived = ?, fact_arrival_date = ?
+                WHERE id = ?
+            ''', (dispatch_date, country, location,
+                  doc_number, rkz_number, estimated_arrival,
+                  is_arrived, fact_arrival_date, existing_id))
+            auto_id = existing_id
+            updated_count += 1
+        else:
+            cursor.execute('''
+                INSERT INTO auto_in_transit (dispatch_date, country, location, doc_number,
+                                              rkz_number, estimated_arrival, added_by, log_status,
+                                              is_arrived, fact_arrival_date)
+                VALUES (?, ?, ?, ?, ?, ?, 'cars_export', ?, ?, ?)
+            ''', (dispatch_date, country, location, doc_number,
+                  rkz_number, estimated_arrival,
+                  'Прибыл' if is_arrived else 'Создан',
+                  is_arrived, fact_arrival_date))
+            auto_id = cursor.lastrowid
+            saved_count += 1
+
+        link_statuses = ('В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту')
+        status_ph = ",".join("?" * len(link_statuses))
+        if rkz_number:
+            rkz_list = [r.strip() for r in rkz_number.split("\n") if r.strip()]
+            for rkz in rkz_list:
+                cursor.execute(
+                    f"UPDATE invoices SET auto_id = ? WHERE doc_number = ? "
+                    f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+                    [auto_id, rkz] + list(link_statuses)
+                )
+        if doc_number:
+            pkcb_list = [p.strip() for p in doc_number.split("\n") if p.strip()]
+            for pkcb in pkcb_list:
+                cursor.execute(
+                    f"UPDATE invoices SET auto_id = ? WHERE pkcb = ? "
+                    f"AND status IN ({status_ph}) AND (auto_id IS NULL OR auto_id = '' OR auto_id = 0)",
+                    [auto_id, pkcb] + list(link_statuses)
+                )
+
+    conn.commit()
+    conn.close()
+    return saved_count, updated_count, skipped_count
