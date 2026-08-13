@@ -1320,7 +1320,10 @@ if current_mode == "Админ-панель" and is_admin:
             uploaded_almaty = st.file_uploader("Перетащите файл Excel из 1С:", type=["xlsx", "xls"], key="uploader_almaty_ship")
             if uploaded_almaty is not None:
                 try:
-                    raw_df = pd.read_excel(uploaded_almaty, header=None)
+                    try:
+                        raw_df = pd.read_excel(uploaded_almaty, header=None, engine='xlrd')
+                    except Exception:
+                        raw_df = pd.read_excel(uploaded_almaty, header=None)
                     raw_df = raw_df.dropna(how="all").reset_index(drop=True)
                     if raw_df.empty:
                         st.error("Файл пуст.")
@@ -1347,6 +1350,11 @@ if current_mode == "Админ-панель" and is_admin:
                             if col in raw_df.columns:
                                 raw_df[col] = raw_df[col].apply(_fix_enc)
 
+                        if 9 in raw_df.columns:
+                            before_count = len(raw_df)
+                            raw_df = raw_df[~raw_df[9].astype(str).str.lower().str.contains("алматы", na=False)].reset_index(drop=True)
+                            st.caption(f"Отфильтровано строк со склада «Алматы»: {before_count - len(raw_df)}. Осталось: {len(raw_df)}.")
+
                         file_invoices = {}
                         for _, r in raw_df.iterrows():
                             doc_num = str(r.get(1, "")).strip()
@@ -1359,6 +1367,7 @@ if current_mode == "Админ-панель" and is_admin:
                         reject_trip_keywords = ["внуково-кз", "брикета-кз", "дроздово-кз", "внуково -кз", "внуково- кз"]
 
                         almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"])
+
                         today_str = datetime.date.today().strftime('%d.%m.%Y')
 
                         shipped_rows = []
@@ -1728,7 +1737,6 @@ elif current_mode == "Отгрузки Алматы":
     cols_almaty_delivery = ['№ счета', 'Дата счета', 'Клиент', 'Прибыл (факт)', 'Статус', 'Рейс', 'Дата рейса', 'Дата отгрузки клиенту']
     st.session_state.current_report = build_report(
         cols_almaty_delivery, status_list=["Отгружено клиенту"],
-        source_sheet_list=["Отгрузки"],
         invoice_text=invoice_input, client_text=client_input,
         start_dt=start_filter, end_dt=end_filter,
         sort_by="Дата рейса", sort_ascending=True
