@@ -1,11 +1,6 @@
 # Streamlit secrets — НИКОГДА не коммитить
 .streamlit/secrets.toml
 
-# База данных SQLite
-*.db
-*.sqlite
-*.sqlite3
-
 # Временные файлы Excel
 *.tmp
 ~$*.xlsx
