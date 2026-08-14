@@ -7,17 +7,25 @@ import os
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transit_system.db")
 
 
+def _get_github_config():
+    """Читает конфиг GitHub из st.secrets. Возвращает (token, repo, branch) или (None, None, None)."""
+    try:
+        import streamlit as st
+        gh = dict(st.secrets["github"])
+        token = gh.get("token", "")
+        repo = gh.get("repo", "natimikul/Transit")
+        branch = gh.get("branch", "main")
+        return token, repo, branch
+    except Exception:
+        return None, None, None
+
+
 def check_github_token():
     """Проверяет статус GitHub токена. Возвращает (status, message).
     status: 'ok' | 'missing' | 'invalid' | 'error'
     """
-    try:
-        import streamlit as st
-        token = st.secrets.get("github", {}).get("token", "")
-        repo = st.secrets.get("github", {}).get("repo", "natimikul/Transit")
-        if not token:
-            return "missing", "GitHub токен не настроен — автосохранение БД отключено."
-    except Exception:
+    token, repo, _ = _get_github_config()
+    if not token:
         return "missing", "GitHub токен не настроен — автосохранение БД отключено."
 
     import urllib.request
@@ -43,17 +51,10 @@ def check_github_token():
 
 def sync_db_to_github():
     """Сохраняет БД в GitHub репозиторий через API.
-    Нужны st.secrets: github_token, github_repo (owner/repo), github_branch (по умолчанию main).
     Возвращает True при успехе, False при ошибке/невозможности.
     """
-    try:
-        import streamlit as st
-        token = st.secrets.get("github", {}).get("token", "")
-        repo = st.secrets.get("github", {}).get("repo", "natimikul/Transit")
-        branch = st.secrets.get("github", {}).get("branch", "main")
-        if not token:
-            return False
-    except Exception:
+    token, repo, branch = _get_github_config()
+    if not token:
         return False
 
     import urllib.request
@@ -65,7 +66,8 @@ def sync_db_to_github():
     with open(DB_NAME, "rb") as f:
         content = base64.b64encode(f.read()).decode("utf-8")
 
-    api_url = f"https://api.github.com/repos/{repo}/contents/{DB_NAME}"
+    db_filename = os.path.basename(DB_NAME)
+    api_url = f"https://api.github.com/repos/{repo}/contents/{db_filename}"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
