@@ -102,18 +102,6 @@ if 'current_report' not in st.session_state: st.session_state.current_report = N
 if 'report_name' not in st.session_state: st.session_state.report_name = ""
 if 'show_email_modal' not in st.session_state: st.session_state.show_email_modal = False
 
-# --- 4. СТАТУС GITHUB ТОКЕНА (для админа) ---
-if is_admin:
-    gh_status, gh_msg = check_github_token()
-    if gh_status == "ok":
-        st.success(f"✅ {gh_msg}")
-    elif gh_status == "missing":
-        st.warning(f"⚠️ {gh_msg}")
-    elif gh_status == "invalid":
-        st.error(f"🚨 {gh_msg} Создайте новый токен: https://github.com/settings/personal-access-tokens/new")
-    else:
-        st.warning(f"⚠️ {gh_msg}")
-
 # --- 5. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
 st.subheader("🔍 Параметры поиска")
 col_client, col_date = st.columns(2)
@@ -425,6 +413,26 @@ current_mode = st.session_state.get("active_report_mode", "Поиск по Кл�
 if current_mode == "Админ-панель" and is_admin:
     st.subheader("⚙️ Панель администратора")
 
+    col_sync1, col_sync2 = st.columns([1, 3])
+    with col_sync1:
+        if st.button("💾 Сохранить БД в GitHub", type="primary", key="btn_sync_db"):
+            with st.spinner("Сохранение..."):
+                ok = sync_db_to_github()
+            if ok:
+                st.success("✅ БД сохранена в GitHub.")
+            else:
+                st.error("❌ Не удалось сохранить. Проверьте токен GitHub в Secrets.")
+    with col_sync2:
+        gh_status, gh_msg = check_github_token()
+        if gh_status == "ok":
+            st.caption(f"✅ {gh_msg}")
+        elif gh_status == "missing":
+            st.caption(f"⚠️ {gh_msg}")
+        elif gh_status == "invalid":
+            st.caption(f"🚨 {gh_msg}")
+        else:
+            st.caption(f"⚠️ {gh_msg}")
+
     # Вкладки по этапам логистики
     tab_import, tab_created, tab_permission, tab_assembly, tab_transit, tab_almaty, tab_shipped, tab_reject, tab_db = st.tabs([
         "📥 Импорт из 1С",
@@ -580,6 +588,7 @@ if current_mode == "Админ-панель" and is_admin:
                                 delete_invoice_by_id(int(row['ID']))
                             st.success(f"✅ Удалено: {len(to_delete)}")
                             st.rerun()
+                            sync_db_to_github()
                 with col_c2:
                     if st.button(f"💾 Сохранить и распределить", type="primary", key=f"btn_created_{key_suffix}"):
                         try:
@@ -648,6 +657,7 @@ if current_mode == "Админ-панель" and is_admin:
                             else:
                                 st.info("Нет счетов для распределения.")
                             st.rerun()
+                            sync_db_to_github()
                         except Exception as e:
                             st.error(f"Ошибка при сохранении: {e}")
                 st.markdown("---")
@@ -755,6 +765,7 @@ if current_mode == "Админ-панель" and is_admin:
                                 delete_invoice_by_id(int(row['ID']))
                             st.success(f"✅ Удалено: {len(to_del)} счетов.")
                             st.rerun()
+                            sync_db_to_github()
                 with col_p2:
                     # Сохраняем даты, проставленные в таблице + отправляем в сборку
                     if st.button(f"🔧 Отправить в сборку ({len(selected)} шт.)", type="primary", key=f"btn_perm_{key_suffix}"):
@@ -771,6 +782,7 @@ if current_mode == "Админ-панель" and is_admin:
                             update_invoices_batch(upd)
                             st.success(f"✅ {len(upd)} счетов отправлены в сборку (даты сохранены).")
                             st.rerun()
+                            sync_db_to_github()
                 st.markdown("---")
 
             for df_group, name, suffix in groups:
@@ -863,6 +875,7 @@ if current_mode == "Админ-панель" and is_admin:
                             delete_invoice_by_id(inv_id)
                         st.success(f"✅ Удалено: {len(to_del_ids)} счетов.")
                         st.rerun()
+                        sync_db_to_github()
 
                 if st.button(f"📝 Применить параметры ({len(selected_ids)} шт.)", key=f"btn_apply_{key_suffix}"):
                     if not selected_ids:
@@ -886,6 +899,7 @@ if current_mode == "Админ-панель" and is_admin:
                             update_invoices_batch(pd.DataFrame([update_data]))
                         st.success(f"✅ Параметры применены к {len(selected_ids)} счетам.")
                         st.rerun()
+                        sync_db_to_github()
 
                 st.markdown(f"**🚛 Отправить отмеченные счета в путь:**")
                 col_car1, col_car2, col_btn = st.columns([2, 2, 1])
@@ -983,6 +997,7 @@ if current_mode == "Админ-панель" and is_admin:
                                        f"Создано авто #{auto_id} (ПкЦБ: {car_pkcb.strip()}). "
                                        f"Привязано по ПкЦБ: {linked}.")
                             st.rerun()
+                            sync_db_to_github()
                         except Exception as e:
                             st.error(f"Ошибка при отправке в путь: {e}")
                 st.markdown("---")
@@ -1028,6 +1043,7 @@ if current_mode == "Админ-панель" and is_admin:
                     msg += f" Привязано счетов: {linked_rkz} (по РКЗ) + {linked_pkcb} (по ПкЦБ)."
                 st.success(msg)
                 st.rerun()
+                sync_db_to_github()
 
         # Список авто в пути
         st.markdown("### 🚛 Активные авто")
@@ -1093,6 +1109,7 @@ if current_mode == "Админ-панель" and is_admin:
                                 n = link_auto_to_invoices_by_pkcb(car_id, pkcb_list)
                                 st.success(f"✅ Привязано {n} счетов по ПкЦБ.")
                                 st.rerun()
+                                sync_db_to_github()
 
                     st.markdown("---")
 
@@ -1120,6 +1137,7 @@ if current_mode == "Админ-панель" and is_admin:
                             st.success(f"✅ Авто #{car_id} прибыло на склад Алматы ({fact_arr.strftime('%d.%m.%Y')}). "
                                         f"Перенесено счетов в «Прибыл на склад Алматы»: {affected}.")
                             st.rerun()
+                            sync_db_to_github()
                     with col_arr3:
                         if st.button("🗑️ Удалить", key=f"btn_del_car_{car_id}"):
                             delete_car_by_id(car_id)
@@ -1231,6 +1249,7 @@ if current_mode == "Админ-панель" and is_admin:
                                     delete_invoice_by_id(inv_id)
                                 st.success(f"✅ Удалено: {len(to_del_ids)} счетов.")
                                 st.rerun()
+                                sync_db_to_github()
                     with col_b2:
                         if st.button(f"📝 Применить дату расценки ({len(selected_ids)} шт.)", key=f"btn_rated_{car_id}"):
                             if not selected_ids:
@@ -1273,6 +1292,7 @@ if current_mode == "Админ-панель" and is_admin:
                             deleted_msg = f" Удалено: {len(to_del_ids)}." if to_del_ids else ""
                             st.success(f"✅ Сохранено!{deleted_msg}")
                             st.rerun()
+                            sync_db_to_github()
 
                     st.markdown("---")
                     col_d1, col_d2 = st.columns(2)
@@ -1424,6 +1444,7 @@ if current_mode == "Админ-панель" and is_admin:
                         else:
                             st.info("Не найдено счетов для отгрузки или отказа.")
                         st.rerun()
+                        sync_db_to_github()
                 except Exception as e:
                     st.error(f"Не удалось обработать файл: {e}")
 
@@ -1668,6 +1689,7 @@ if current_mode == "Админ-панель" and is_admin:
                             delete_invoice_by_id(int(row['ID']))
                         st.success(f"✅ Удалено: {len(to_del)} счетов.")
                         st.rerun()
+                        sync_db_to_github()
             with col_db2:
                 if st.button("💾 Сохранить изменения", type="primary", key="btn_save_db"):
                     to_del = edited_db[edited_db['🗑️ Удалить'] == True]
@@ -1686,6 +1708,7 @@ if current_mode == "Админ-панель" and is_admin:
                     deleted_msg = f" Удалено: {len(to_del)}." if not to_del.empty else ""
                     st.success(f"✅ Сохранено!{deleted_msg}")
                     st.rerun()
+                    sync_db_to_github()
         else:
             st.info("📭 База данных пуста.")
 
