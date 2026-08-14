@@ -4,7 +4,7 @@ import base64
 import json
 import os
 
-DB_NAME = "transit_system.db"
+DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transit_system.db")
 
 
 def sync_db_to_github():
