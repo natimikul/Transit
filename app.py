@@ -22,7 +22,7 @@ from database import (
     delete_car_by_id, update_car, delete_invoice_by_id,
     link_auto_to_invoices_by_rkz, link_auto_to_invoices_by_pkcb,
     get_car_invoices_count, get_invoices_for_email, get_car_invoice_doc_numbers,
-    get_arrived_cars
+    get_arrived_cars, sync_db_to_github
 )
 
 # Инициализируем базу данных при старте
