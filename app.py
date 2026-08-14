@@ -22,7 +22,7 @@ from database import (
     delete_car_by_id, update_car, delete_invoice_by_id,
     link_auto_to_invoices_by_rkz, link_auto_to_invoices_by_pkcb,
     get_car_invoices_count, get_invoices_for_email, get_car_invoice_doc_numbers,
-    get_arrived_cars, sync_db_to_github
+    get_arrived_cars, sync_db_to_github, check_github_token
 )
 
 # Инициализируем базу данных при старте
@@ -101,6 +101,18 @@ list_all_statuses = [
 if 'current_report' not in st.session_state: st.session_state.current_report = None
 if 'report_name' not in st.session_state: st.session_state.report_name = ""
 if 'show_email_modal' not in st.session_state: st.session_state.show_email_modal = False
+
+# --- 4. СТАТУС GITHUB ТОКЕНА (для админа) ---
+if is_admin:
+    gh_status, gh_msg = check_github_token()
+    if gh_status == "ok":
+        st.success(f"✅ {gh_msg}")
+    elif gh_status == "missing":
+        st.warning(f"⚠️ {gh_msg}")
+    elif gh_status == "invalid":
+        st.error(f"🚨 {gh_msg} Создайте новый токен: https://github.com/settings/personal-access-tokens/new")
+    else:
+        st.warning(f"⚠️ {gh_msg}")
 
 # --- 5. ИНТЕРФЕЙС ПАРАМЕТРОВ ПОИСКА ---
 st.subheader("🔍 Параметры поиска")
