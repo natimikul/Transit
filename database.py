@@ -180,7 +180,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ СО СЧЕТАМИ ==========
@@ -226,7 +225,6 @@ def save_invoice_to_db(data_dict):
     ))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def get_invoices_by_status(status):
@@ -345,7 +343,6 @@ def update_invoices_batch(df_updates):
         cursor.execute(sql, values)
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def update_invoice_status(invoice_id, status):
@@ -355,7 +352,6 @@ def update_invoice_status(invoice_id, status):
     cursor.execute("UPDATE invoices SET status = ? WHERE id = ?", (status, invoice_id))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def link_invoice_to_auto(invoice_id, auto_id):
@@ -368,7 +364,6 @@ def link_invoice_to_auto(invoice_id, auto_id):
     )
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def delete_invoices_by_status(status):
@@ -378,7 +373,6 @@ def delete_invoices_by_status(status):
     cursor.execute("DELETE FROM invoices WHERE status = ?", (status,))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def delete_invoice_by_id(invoice_id):
@@ -388,7 +382,6 @@ def delete_invoice_by_id(invoice_id):
     cursor.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def get_invoices_by_auto_id(auto_id):
@@ -496,7 +489,6 @@ def mark_car_arrived(car_id, fact_arrival_date):
     affected = cursor.rowcount
     conn.commit()
     conn.close()
-    sync_db_to_github()
     return affected
 
 
@@ -508,7 +500,6 @@ def delete_car_by_id(car_id):
     cursor.execute("DELETE FROM auto_in_transit WHERE id = ?", (car_id,))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 def update_car(car_id, dispatch_date, country, location, doc_number,
@@ -525,7 +516,6 @@ def update_car(car_id, dispatch_date, country, location, doc_number,
           estimated_arrival, car_id))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 
 # ========== СВЯЗЬ АВТО СО СЧЕТАМИ ПО № РКЗ ==========
@@ -556,7 +546,6 @@ def link_auto_to_invoices_by_rkz(car_id, rkz_numbers, status_list=None):
     affected = cursor.rowcount
     conn.commit()
     conn.close()
-    sync_db_to_github()
     return affected
 
 
@@ -586,7 +575,6 @@ def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers, status_list=None):
     affected = cursor.rowcount
     conn.commit()
     conn.close()
-    sync_db_to_github()
     return affected
 
 
