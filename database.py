@@ -7,6 +7,40 @@ import os
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transit_system.db")
 
 
+def check_github_token():
+    """Проверяет статус GitHub токена. Возвращает (status, message).
+    status: 'ok' | 'missing' | 'invalid' | 'error'
+    """
+    try:
+        import streamlit as st
+        token = st.secrets.get("github", {}).get("token", "")
+        repo = st.secrets.get("github", {}).get("repo", "natimikul/Transit")
+        if not token:
+            return "missing", "GitHub токен не настроен — автосохранение БД отключено."
+    except Exception:
+        return "missing", "GitHub токен не настроен — автосохранение БД отключено."
+
+    import urllib.request
+    import urllib.error
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}",
+            headers=headers,
+        )
+        with urllib.request.urlopen(req) as resp:
+            return "ok", "GitHub токен активен — автосохранение БД работает."
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return "invalid", "GitHub токен истёк или недействителен — автосохранение БД не работает! Обновите токен."
+        return "error", f"Ошибка проверки токена (HTTP {e.code})."
+    except Exception as e:
+        return "error", f"Ошибка проверки токена: {e}"
+
+
 def sync_db_to_github():
     """Сохраняет БД в GitHub репозиторий через API.
     Нужны st.secrets: github_token, github_repo (owner/repo), github_branch (по умолчанию main).
