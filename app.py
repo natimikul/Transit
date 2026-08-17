@@ -565,14 +565,16 @@ if current_mode == "Админ-панель" and is_admin:
                              'Плановая дата отгрузки', 'Примечание']:
                     if col in disp.columns:
                         disp[col] = disp[col].fillna('').astype(str)
-                disp.insert(0, '🗑️ Удалить', False)
-                available = ['🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
+                disp.insert(0, '✅ Отметка', False)
+                disp.insert(1, '🗑️ Удалить', False)
+                available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                              'Статус', 'Разрешение РБ', 'Разрешение КЗ', 'Плановая дата отгрузки', 'Примечание']
                 disp = disp[[c for c in available if c in disp.columns]]
 
                 edited = st.data_editor(
                     disp,
                     column_config={
+                        '✅ Отметка': st.column_config.CheckboxColumn(),
                         '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
                         'ID': st.column_config.NumberColumn(disabled=True),
                         '№ счета': st.column_config.TextColumn(disabled=True),
@@ -604,24 +606,23 @@ if current_mode == "Админ-панель" and is_admin:
                 with col_c2:
                     editor_state = st.session_state.get(f"editor_created_{key_suffix}", {})
                     edited_rows = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
-                    selected_count = sum(1 for pos, ch in edited_rows.items() if ch.get('🗑️ Удалить') is not True)
-                    if st.button(f"📝 Применить дату ({selected_count} шт.)", key=f"btn_plan_ship_{key_suffix}"):
-                        if not mass_plan_ship:
+                    selected_ids = []
+                    for pos in range(len(df)):
+                        changes = edited_rows.get(pos, {})
+                        if changes.get('✅ Отметка') is True:
+                            selected_ids.append(int(df.iloc[pos]['id']))
+                    if st.button(f"📝 Применить дату ({len(selected_ids)} шт.)", key=f"btn_plan_ship_{key_suffix}"):
+                        if not selected_ids:
+                            st.warning("Отметьте счета галочкой «✅ Отметка».")
+                        elif not mass_plan_ship:
                             st.warning("Укажите «Плановая дата отгрузки» в массовых параметрах.")
                         else:
                             ship_str = mass_plan_ship.strftime('%d.%m.%Y')
-                            rows = []
-                            for pos in range(len(df)):
-                                changes = edited_rows.get(pos, {})
-                                if changes.get('🗑️ Удалить') is True:
-                                    continue
-                                inv_id = int(df.iloc[pos]['id'])
-                                rows.append({'id': inv_id, 'plan_ship_date': ship_str})
-                            if rows:
-                                update_invoices_batch(pd.DataFrame(rows))
-                                st.success(f"✅ Плановая дата отгрузки ({ship_str}) применена к {len(rows)} счетам.")
-                                sync_db_to_github()
-                                st.rerun()
+                            rows = [{'id': i, 'plan_ship_date': ship_str} for i in selected_ids]
+                            update_invoices_batch(pd.DataFrame(rows))
+                            st.success(f"✅ Плановая дата отгрузки ({ship_str}) применена к {len(rows)} счетам.")
+                            sync_db_to_github()
+                            st.rerun()
                 with col_c3:
                     if st.button(f"💾 Сохранить и распределить", type="primary", key=f"btn_created_{key_suffix}"):
                         try:
