@@ -1804,7 +1804,6 @@ elif current_mode == "Отгружено":
 elif current_mode == "Прибытие":
     st.session_state.current_report = build_report(
         cols_all, status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"],
-        source_sheet_list=["Алм"],
         invoice_text=invoice_input, client_text=client_input,
         start_dt=start_filter, end_dt=end_filter,
         sort_by="Прибыл (факт)", sort_ascending=True
