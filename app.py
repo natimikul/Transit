@@ -553,6 +553,10 @@ if current_mode == "Админ-панель" and is_admin:
                     return
                 st.markdown(f"#### {group_flag} {group_name} ({len(df)} шт.)")
                 disp = df.rename(columns={k: v for k, v in rename_map_created.items() if k in df.columns})
+                for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Статус',
+                             'Плановая дата отгрузки', 'Примечание']:
+                    if col in disp.columns:
+                        disp[col] = disp[col].fillna('').astype(str)
                 disp.insert(0, '🗑️ Удалить', False)
                 available = ['🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                              'Статус', 'Разрешение РБ', 'Разрешение КЗ', 'Плановая дата отгрузки', 'Примечание']
@@ -708,6 +712,10 @@ if current_mode == "Админ-панель" and is_admin:
                     return
                 st.markdown(f"#### {group_name} ({len(df)} шт.)")
                 disp = df.rename(columns={k: v for k, v in rename_map_perm.items() if k in df.columns})
+                for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад',
+                             'Дата отправки на разрешение', 'Плановая дата отгрузки', 'Примечание']:
+                    if col in disp.columns:
+                        disp[col] = disp[col].fillna('').astype(str)
                 disp.insert(0, '✅ Отметка', False)
                 disp.insert(1, '🗑️ Удалить', False)
                 available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
@@ -826,6 +834,11 @@ if current_mode == "Админ-панель" and is_admin:
                     return None
                 st.markdown(f"#### {group_flag} {group_name} ({len(df)} шт.)")
                 disp = df.rename(columns={k: v for k, v in rename_map_asm.items() if k in df.columns})
+                for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
+                             'Плановая дата отгрузки', 'Дата отгрузки (факт)',
+                             'Плановая дата прибытия', 'Примечание']:
+                    if col in disp.columns:
+                        disp[col] = disp[col].fillna('').astype(str)
                 disp.insert(0, '✅ Отметка', False)
                 disp.insert(1, '🗑️ Удалить', False)
                 available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
@@ -1084,8 +1097,9 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_rkz_clean = "\n".join([d.strip() for d in edit_rkz.split("\n") if d.strip()])
                         update_car(car_id, edit_dispatch, edit_country, edit_location,
                                    edit_docs_clean, edit_rkz_clean, edit_est_arrival)
-                        linked_rkz = link_auto_to_invoices_by_rkz(car_id, [r for r in edit_rkz_clean.split("\n") if r.strip()])
-                        linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()])
+                        link_statuses = ['В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
+                        linked_rkz = link_auto_to_invoices_by_rkz(car_id, [r for r in edit_rkz_clean.split("\n") if r.strip()], status_list=link_statuses)
+                        linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()], status_list=link_statuses)
                         msg = f"✅ Данные авто #{car_id} обновлены."
                         if linked_rkz or linked_pkcb:
                             msg += f" Доп. привязано счетов: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
@@ -1106,7 +1120,8 @@ if current_mode == "Админ-панель" and is_admin:
                             if not pkcb_list:
                                 st.warning("Введите хотя бы один номер ПкЦБ.")
                             else:
-                                n = link_auto_to_invoices_by_pkcb(car_id, pkcb_list)
+                                link_statuses = ['В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
+                                n = link_auto_to_invoices_by_pkcb(car_id, pkcb_list, status_list=link_statuses)
                                 st.success(f"✅ Привязано {n} счетов по ПкЦБ.")
                                 st.rerun()
                                 sync_db_to_github()
