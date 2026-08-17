@@ -547,6 +547,14 @@ if current_mode == "Админ-панель" and is_admin:
             vnu_df = created_invoices[created_invoices["warehouse"] == "Внуково"].copy()
             bridr_df = created_invoices[created_invoices["warehouse"].isin(["Брикета", "Дроздово"])].copy()
 
+            st.markdown("#### 📝 Массовые параметры (применяются к отмеченным счетам)")
+            col_mp1, col_mp2 = st.columns(2)
+            with col_mp1:
+                mass_plan_ship = st.date_input("Плановая дата отгрузки", value=None, key="mass_plan_ship_created")
+            with col_mp2:
+                st.write("")
+            st.markdown("---")
+
             def _render_created_table(df, group_name, group_flag, key_suffix):
                 if df.empty:
                     st.info(f"📭 {group_name}: нет счетов.")
@@ -581,7 +589,7 @@ if current_mode == "Админ-панель" and is_admin:
                     num_rows="fixed", key=f"editor_created_{key_suffix}"
                 )
 
-                col_c1, col_c2 = st.columns([1, 2])
+                col_c1, col_c2, col_c3 = st.columns([1, 1, 2])
                 with col_c1:
                     if st.button(f"🗑️ Удалить", key=f"btn_del_created_{key_suffix}"):
                         to_delete = edited[edited['🗑️ Удалить'] == True]
@@ -591,9 +599,30 @@ if current_mode == "Админ-панель" and is_admin:
                             for _, row in to_delete.iterrows():
                                 delete_invoice_by_id(int(row['ID']))
                             st.success(f"✅ Удалено: {len(to_delete)}")
-                            st.rerun()
                             sync_db_to_github()
+                            st.rerun()
                 with col_c2:
+                    editor_state = st.session_state.get(f"editor_created_{key_suffix}", {})
+                    edited_rows = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                    selected_count = sum(1 for pos, ch in edited_rows.items() if ch.get('🗑️ Удалить') is not True)
+                    if st.button(f"📝 Применить дату ({selected_count} шт.)", key=f"btn_plan_ship_{key_suffix}"):
+                        if not mass_plan_ship:
+                            st.warning("Укажите «Плановая дата отгрузки» в массовых параметрах.")
+                        else:
+                            ship_str = mass_plan_ship.strftime('%d.%m.%Y')
+                            rows = []
+                            for pos in range(len(df)):
+                                changes = edited_rows.get(pos, {})
+                                if changes.get('🗑️ Удалить') is True:
+                                    continue
+                                inv_id = int(df.iloc[pos]['id'])
+                                rows.append({'id': inv_id, 'plan_ship_date': ship_str})
+                            if rows:
+                                update_invoices_batch(pd.DataFrame(rows))
+                                st.success(f"✅ Плановая дата отгрузки ({ship_str}) применена к {len(rows)} счетам.")
+                                sync_db_to_github()
+                                st.rerun()
+                with col_c3:
                     if st.button(f"💾 Сохранить и распределить", type="primary", key=f"btn_created_{key_suffix}"):
                         try:
                             editor_state = st.session_state.get(f"editor_created_{key_suffix}", {})
