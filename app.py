@@ -1423,14 +1423,15 @@ if current_mode == "Админ-панель" and is_admin:
                         raw_df.columns = list(range(1, len(raw_df.columns) + 1))
                         if 1 in raw_df.columns:
                             raw_df = raw_df[raw_df[1].notna() & (raw_df[1].astype(str).str.strip() != "")].reset_index(drop=True)
-                        for col in [1, 2, 3, 4, 5, 7, 9]:
-                            if col in raw_df.columns:
-                                raw_df[col] = raw_df[col].apply(_fix_enc)
 
                         if 9 in raw_df.columns:
                             before_count = len(raw_df)
                             raw_df = raw_df[~raw_df[9].astype(str).str.lower().str.contains("алматы", na=False)].reset_index(drop=True)
                             st.caption(f"Отфильтровано строк со склада «Алматы»: {before_count - len(raw_df)}. Осталось: {len(raw_df)}.")
+
+                        for col in [1, 2, 3, 4, 5, 7, 9]:
+                            if col in raw_df.columns:
+                                raw_df[col] = raw_df[col].apply(_fix_enc)
 
                         file_invoices = {}
                         for _, r in raw_df.iterrows():
