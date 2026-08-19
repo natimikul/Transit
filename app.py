@@ -29,8 +29,8 @@ from database import (
 init_db()
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
-st.set_page_config(page_title="Система мониторинга", layout="wide")
-st.title("📦 Система мониторинга статуса счетов")
+st.set_page_config(page_title="Статус транзитных счетов", layout="wide")
+st.title("📦 Статус транзитных счетов")
 
 # --- 1. ЗАЩИТА ПАРОЛЕМ (БЕЗ ХАРДКОДА: хэши в st.secrets) ---
 # Пароли хранятся в st.secrets в виде bcrypt-хэшей. Сгенерировать хэш:
@@ -1391,28 +1391,25 @@ if current_mode == "Админ-панель" and is_admin:
                 _render_almaty_car_table(0, {'country': '', 'fact_arrival_date': '', 'location': '', 'doc_number': '', 'rkz_number': ''}, df_no)
 
             st.markdown("---")
-            st.markdown("### 📥 Загрузка файла отгрузок из 1С")
-            st.caption("Загрузите Excel-файл из 1С. Счета с рейсом НЕ «Внуково-КЗ»/«Брикета-КЗ»/«Дроздово-КЗ» перейдут в «Отгружено клиенту». Счета, отсутствующие в файле → «Отказ».")
+            st.markdown("### 📥 Загрузка файла «Отгружено клиенту»")
+            st.caption("Загрузите файл с отгруженными счетами. Счета найденные на вкладке «Прибытие» → «Отгрузки Алматы». Рейс и дата рейса обновляются из файла.")
 
-            uploaded_almaty = st.file_uploader("Перетащите файл Excel из 1С:", type=["xlsx", "xls"], key="uploader_almaty_ship")
-            if uploaded_almaty is not None:
+            uploaded_shipped = st.file_uploader("Перетащите файл «Отгружено клиенту»:", type=["xlsx", "xls"], key="uploader_shipped")
+            if uploaded_shipped is not None:
                 try:
                     try:
-                        raw_df = pd.read_excel(uploaded_almaty, header=None, engine='xlrd')
+                        raw_df = pd.read_excel(uploaded_shipped, header=None, engine='xlrd')
                     except Exception:
-                        raw_df = pd.read_excel(uploaded_almaty, header=None)
+                        raw_df = pd.read_excel(uploaded_shipped, header=None)
                     raw_df = raw_df.dropna(how="all").reset_index(drop=True)
                     if raw_df.empty:
                         st.error("Файл пуст.")
                     else:
-                        def _fix_enc(t):
-                            if pd.isna(t):
-                                return ""
+                        def _fix_enc_ship(t):
+                            if pd.isna(t): return ""
                             t = str(t).strip()
-                            try:
-                                return t.encode("cp1252").decode("cp1251")
-                            except Exception:
-                                return t
+                            try: return t.encode("cp1252").decode("cp1251")
+                            except Exception: return t
                         header_idx = 0
                         for i in range(min(5, len(raw_df))):
                             rv = [str(v) for v in raw_df.iloc[i].tolist()]
@@ -1423,74 +1420,105 @@ if current_mode == "Админ-панель" and is_admin:
                         raw_df.columns = list(range(1, len(raw_df.columns) + 1))
                         if 1 in raw_df.columns:
                             raw_df = raw_df[raw_df[1].notna() & (raw_df[1].astype(str).str.strip() != "")].reset_index(drop=True)
-
-                        if 9 in raw_df.columns:
-                            before_count = len(raw_df)
-                            raw_df = raw_df[~raw_df[9].astype(str).str.lower().str.contains("алматы", na=False)].reset_index(drop=True)
-                            st.caption(f"Отфильтровано строк со склада «Алматы»: {before_count - len(raw_df)}. Осталось: {len(raw_df)}.")
-
-                        for col in [1, 2, 3, 4, 5, 7, 9]:
+                        for col in [1, 3, 4]:
                             if col in raw_df.columns:
-                                raw_df[col] = raw_df[col].apply(_fix_enc)
+                                raw_df[col] = raw_df[col].apply(_fix_enc_ship)
 
                         file_invoices = {}
                         for _, r in raw_df.iterrows():
                             doc_num = str(r.get(1, "")).strip()
-                            if not doc_num:
-                                continue
+                            if not doc_num: continue
                             trip_name = str(r.get(3, "")).strip()
                             trip_date = str(r.get(4, "")).strip()
                             file_invoices[doc_num] = {"trip_name": trip_name, "trip_date": trip_date}
 
-                        reject_trip_keywords = ["внуково-кз", "брикета-кз", "дроздово-кз", "внуково -кз", "внуково- кз"]
-
-                        almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"])
-
+                        almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту", "В пути", "В сборке"])
                         today_str = datetime.date.today().strftime('%d.%m.%Y')
-
                         shipped_rows = []
-                        reject_rows = []
                         for _, inv in almaty_ready.iterrows():
                             doc_num = str(inv.get('doc_number', '') or '').strip()
-                            if not doc_num:
-                                continue
+                            if not doc_num: continue
                             if doc_num in file_invoices:
-                                trip_name = file_invoices[doc_num]["trip_name"]
-                                trip_date = file_invoices[doc_num]["trip_date"]
-                                trip_lower = trip_name.lower()
-                                is_reject_trip = any(k in trip_lower for k in reject_trip_keywords)
-                                if is_reject_trip:
-                                    continue
                                 shipped_rows.append({
                                     'id': int(inv['id']),
                                     'status': 'Отгружено клиенту',
-                                    'final_trip_name': trip_name,
-                                    'final_trip_date': trip_date,
-                                    'delivery_date_to_client': today_str,
+                                    'final_trip_name': file_invoices[doc_num]["trip_name"],
+                                    'final_trip_date': file_invoices[doc_num]["trip_date"],
                                 })
-                            else:
+                        if shipped_rows:
+                            update_invoices_batch(pd.DataFrame(shipped_rows))
+                            sync_db_to_github()
+                            st.success(f"✅ {len(shipped_rows)} счетов → «Отгружено клиенту».")
+                            del st.session_state["uploader_shipped"]
+                            st.rerun()
+                        else:
+                            st.warning("Не найдено счетов для отгрузки (счета уже отгружены или отсутствуют на вкладке «Прибытие»).")
+                            del st.session_state["uploader_shipped"]
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Не удалось обработать файл: {e}")
+
+            st.markdown("---")
+            st.markdown("### 📥 Загрузка файла «Отказ»")
+            st.caption("Загрузите файл с отказными счетами. Счета найденные на вкладке «Прибытие» → вкладка «Отказ».")
+
+            uploaded_reject = st.file_uploader("Перетащите файл «Отказ»:", type=["xlsx", "xls"], key="uploader_reject")
+            if uploaded_reject is not None:
+                try:
+                    try:
+                        raw_df = pd.read_excel(uploaded_reject, header=None, engine='xlrd')
+                    except Exception:
+                        raw_df = pd.read_excel(uploaded_reject, header=None)
+                    raw_df = raw_df.dropna(how="all").reset_index(drop=True)
+                    if raw_df.empty:
+                        st.error("Файл пуст.")
+                    else:
+                        def _fix_enc_rej(t):
+                            if pd.isna(t): return ""
+                            t = str(t).strip()
+                            try: return t.encode("cp1252").decode("cp1251")
+                            except Exception: return t
+                        header_idx = 0
+                        for i in range(min(5, len(raw_df))):
+                            rv = [str(v) for v in raw_df.iloc[i].tolist()]
+                            if "номер" in " ".join(rv).lower() and "дата" in " ".join(rv).lower():
+                                header_idx = i
+                                break
+                        raw_df = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
+                        raw_df.columns = list(range(1, len(raw_df.columns) + 1))
+                        if 1 in raw_df.columns:
+                            raw_df = raw_df[raw_df[1].notna() & (raw_df[1].astype(str).str.strip() != "")].reset_index(drop=True)
+                        if 1 in raw_df.columns:
+                            raw_df[1] = raw_df[1].apply(_fix_enc_rej)
+
+                        reject_docs = set()
+                        for _, r in raw_df.iterrows():
+                            doc_num = str(r.get(1, "")).strip()
+                            if doc_num:
+                                reject_docs.add(doc_num)
+
+                        almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту", "В пути", "В сборке"])
+                        today_str = datetime.date.today().strftime('%d.%m.%Y')
+                        reject_rows = []
+                        for _, inv in almaty_ready.iterrows():
+                            doc_num = str(inv.get('doc_number', '') or '').strip()
+                            if not doc_num: continue
+                            if doc_num in reject_docs:
                                 reject_rows.append({
                                     'id': int(inv['id']),
                                     'status': 'Отказ',
                                     'reject_date': today_str,
                                 })
-
-                        if shipped_rows:
-                            update_invoices_batch(pd.DataFrame(shipped_rows))
                         if reject_rows:
                             update_invoices_batch(pd.DataFrame(reject_rows))
-
-                        msg_parts = []
-                        if shipped_rows:
-                            msg_parts.append(f"{len(shipped_rows)} → «Отгружено клиенту»")
-                        if reject_rows:
-                            msg_parts.append(f"{len(reject_rows)} → «Отказ»")
-                        if msg_parts:
-                            st.success(f"✅ Обработано: {', '.join(msg_parts)}.")
+                            sync_db_to_github()
+                            st.success(f"✅ {len(reject_rows)} счетов → «Отказ».")
+                            del st.session_state["uploader_reject"]
+                            st.rerun()
                         else:
-                            st.info("Не найдено счетов для отгрузки или отказа.")
-                        st.rerun()
-                        sync_db_to_github()
+                            st.warning("Не найдено счетов для отказа (счета уже обработаны или отсутствуют на вкладке «Прибытие»).")
+                            del st.session_state["uploader_reject"]
+                            st.rerun()
                 except Exception as e:
                     st.error(f"Не удалось обработать файл: {e}")
 
