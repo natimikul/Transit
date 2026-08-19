@@ -1471,24 +1471,33 @@ if current_mode == "Админ-панель" and is_admin:
                         almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту", "В пути", "В сборке"])
                         today_str = datetime.date.today().strftime('%d.%m.%Y')
                         shipped_rows = []
+                        skipped_rows = 0
                         for _, inv in almaty_ready.iterrows():
                             doc_num = str(inv.get('doc_number', '') or '').strip()
                             if not doc_num: continue
                             if doc_num in file_invoices:
-                                shipped_rows.append({
-                                    'id': int(inv['id']),
-                                    'status': 'Отгружено клиенту',
-                                    'final_trip_name': file_invoices[doc_num]["trip_name"],
-                                    'final_trip_date': file_invoices[doc_num]["trip_date"],
-                                })
+                                trip_name = file_invoices[doc_num]["trip_name"]
+                                trip_lower = trip_name.lower()
+                                if any(k in trip_lower for k in ["внуково", "брикета", "дроздово"]):
+                                    skipped_rows += 1
+                                else:
+                                    shipped_rows.append({
+                                        'id': int(inv['id']),
+                                        'status': 'Отгружено клиенту',
+                                        'final_trip_name': trip_name,
+                                        'final_trip_date': file_invoices[doc_num]["trip_date"],
+                                    })
                         if shipped_rows:
                             update_invoices_batch(pd.DataFrame(shipped_rows))
                             sync_db_to_github()
-                            st.success(f"✅ {len(shipped_rows)} счетов → «Отгружено клиенту».")
+                            msg = f"✅ {len(shipped_rows)} счетов → «Отгружено клиенту»."
+                            if skipped_rows:
+                                msg += f" Пропущено (рейсы Внуково/Брикета/Дроздово — пополнение): {skipped_rows}."
+                            st.success(msg)
                             del st.session_state["uploader_shipped"]
                             st.rerun()
                         else:
-                            st.warning("Не найдено счетов для отгрузки (счета уже отгружены или отсутствуют на вкладке «Прибытие»).")
+                            st.warning("Не найдено счетов для отгрузки (все рейсы Внуково/Брикета/Дроздово или счета уже отгружены).")
                             del st.session_state["uploader_shipped"]
                             st.rerun()
                 except Exception as e:
