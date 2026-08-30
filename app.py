@@ -13,7 +13,7 @@ import pandas as pd
 import datetime
 from io import BytesIO
 from replenishment import show_replenishment_page
-from excel_import import parse_excel_1c, import_invoices_to_db, import_db_export, import_cars_export
+from excel_import import parse_excel_1c, import_invoices_to_db
 from database import (
     init_db, save_car_to_db, get_all_cars_from_db,
     save_invoice_to_db, get_all_invoices, get_invoices_by_filters,
@@ -465,7 +465,7 @@ if current_mode == "Админ-панель" and is_admin:
     # ---------------- ВКЛАДКА: ИМПОРТ ----------------
     with tab_import:
         st.markdown("### 📥 Загрузка ежедневного отчёта из 1С")
-        st.caption("Файл Excel (.xlsx, .xls) из 1С. Строки склада «Алматы» игнорируются автоматически.")
+        st.caption("Файл Excel (.xlsx, .xls) из 1С. Загружаются счета со статусами: НЕТ НАКЛАДНОЙ, Выгружен в WMS, Не обрабатывать. Строки склада «Алматы» игнорируются.")
 
         uploaded_excel = st.file_uploader("Перетащите файл:", type=["xlsx", "xls"], key="uploader_1c")
 
@@ -516,32 +516,6 @@ if current_mode == "Админ-панель" and is_admin:
                         st.dataframe(parsed_df[preview_cols], use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(f"Не удалось обработать файл. Ошибка: {e}")
-
-        st.markdown("---")
-        st.markdown("#### 📦 Импорт из файла экспорта БД (db_export.xlsx)")
-        st.caption("Загрузите файл db_export.xlsx со всеми счетами и их данными (статусы, даты, ПкЦБ и т.д.). Существующие счета обновляются, новые — добавляются.")
-        uploaded_db = st.file_uploader("Перетащите db_export.xlsx:", type=["xlsx", "xls"], key="uploader_db_export")
-        if uploaded_db is not None:
-            try:
-                with st.spinner("Импорт..."):
-                    saved, updated, skipped = import_db_export(uploaded_db)
-                st.success(f"✅ Импорт завершён! Новых: {saved}, обновлено: {updated}, пропущено: {skipped}")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Не удалось импортировать файл. Ошибка: {e}")
-
-        st.markdown("---")
-        st.markdown("#### 🚛 Импорт авто из файла экспорта (cars_export.xlsx)")
-        st.caption("Загрузите файл cars_export.xlsx с авто (дата отгрузки, страна, ПкЦБ, РКЗ, статус прибытия). Счета привязываются по РКЗ/ПкЦБ автоматически.")
-        uploaded_cars = st.file_uploader("Перетащите cars_export.xlsx:", type=["xlsx", "xls"], key="uploader_cars_export")
-        if uploaded_cars is not None:
-            try:
-                with st.spinner("Импорт авто..."):
-                    saved, updated, skipped = import_cars_export(uploaded_cars)
-                st.success(f"✅ Импорт авто завершён! Новых: {saved}, обновлено: {updated}, пропущено: {skipped}")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Не удалось импортировать файл авто. Ошибка: {e}")
 
         st.markdown("---")
         st.markdown("#### 🗄️ Восстановление из резервной копии БД (.db)")
@@ -1144,19 +1118,19 @@ if current_mode == "Админ-панель" and is_admin:
                     auto_rkz_list = [d for d in linked_doc_numbers if d not in rkz_list]
                     combined_rkz = rkz_list + auto_rkz_list
 
-                    st.markdown("**📝 Редактировать данные авто:**")
-                    col_e1, col_e2, col_e3 = st.columns(3)
+                    st.markdown("**📝 Данные авто:**")
+                    col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                     with col_e1:
                         edit_dispatch = st.text_input("Дата отгрузки", value=car.get('dispatch_date', ''), key=f"edit_dispatch_{car_id}")
-                        edit_country = st.text_input("Страна", value=car.get('country', ''), key=f"edit_country_{car_id}")
                     with col_e2:
-                        edit_location = st.text_input("Локация", value=car.get('location', ''), key=f"edit_location_{car_id}")
-                        edit_est_arrival = st.text_input("Плановая дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
+                        edit_country = st.text_input("Страна", value=car.get('country', ''), key=f"edit_country_{car_id}")
                     with col_e3:
-                        edit_docs = st.text_area("№ документов (ПкЦБ) — по одному в строке",
-                                                  value="\n".join(docs_list), key=f"edit_docs_{car_id}", height=80)
-                        edit_rkz = st.text_area("№ РКЗ (СЧКЗ) — ручной ввод (по одному в строке)",
-                                                  value="\n".join(rkz_list), key=f"edit_rkz_{car_id}", height=80)
+                        edit_location = st.text_input("Локация", value=car.get('location', ''), key=f"edit_location_{car_id}")
+                    with col_e4:
+                        edit_est_arrival = st.text_input("План. дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
+
+                    edit_docs = st.text_area("№ документов (ПкЦБ)", value="\n".join(docs_list), key=f"edit_docs_{car_id}", height=60)
+                    edit_rkz = st.text_area("№ РКЗ (СЧКЗ) — ручной ввод", value="\n".join(rkz_list), key=f"edit_rkz_{car_id}", height=60)
 
                     if st.button("💾 Сохранить изменения авто", key=f"btn_save_edit_car_{car_id}"):
                         edit_docs_clean = "\n".join([d.strip() for d in edit_docs.split("\n") if d.strip()])
@@ -1168,17 +1142,17 @@ if current_mode == "Админ-панель" and is_admin:
                         linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()], status_list=link_statuses)
                         msg = f"✅ Данные авто #{car_id} обновлены."
                         if linked_rkz or linked_pkcb:
-                            msg += f" Доп. привязано счетов: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
+                            msg += f" Доп. привязано: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
                         st.success(msg)
+                        sync_db_to_github()
                         st.rerun()
 
                     st.markdown("---")
 
-                    st.markdown("**➕ ПкЦБ пополнения (дополнительная привязка счетов):**")
+                    st.markdown(f"**➕ ПкЦБ пополнения** (из счетов привязано: {len(auto_rkz_list)}):")
                     col_pk1, col_pk2 = st.columns([3, 1])
                     with col_pk1:
-                        pkcb_extra = st.text_area("Введите номера ПкЦБ — по одному в строке",
-                                                   key=f"pkcb_extra_{car_id}", height=70)
+                        pkcb_extra = st.text_area("№ ПкЦБ — по одному в строке", key=f"pkcb_extra_{car_id}", height=60)
                     with col_pk2:
                         st.write("")
                         if st.button("🔗 Привязать", key=f"btn_link_pkcb_{car_id}"):
@@ -1189,36 +1163,21 @@ if current_mode == "Админ-панель" and is_admin:
                                 link_statuses = ['В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
                                 n = link_auto_to_invoices_by_pkcb(car_id, pkcb_list, status_list=link_statuses)
                                 st.success(f"✅ Привязано {n} счетов по ПкЦБ.")
-                                st.rerun()
                                 sync_db_to_github()
+                                st.rerun()
 
                     st.markdown("---")
 
-                    col_d1, col_d2 = st.columns(2)
-                    with col_d1:
-                        st.caption(f"📋 ПкЦБ ({len(docs_list)}):")
-                        if docs_list:
-                            st.code("\n".join(docs_list), language="")
-                    with col_d2:
-                        st.caption(f"📑 № РКЗ (СЧКЗ) — всего {len(combined_rkz)} "
-                                   f"(ручных: {len(rkz_list)}, из счетов: {len(auto_rkz_list)}):")
-                        if combined_rkz:
-                            st.code("\n".join(combined_rkz), language="")
-
-                    st.markdown("---")
-
-                    # ---- Отметка прибытия ----
                     st.markdown("**✅ Отметка прибытия:**")
                     col_arr1, col_arr2, col_arr3 = st.columns([2, 1, 1])
                     with col_arr1:
-                        fact_arr = st.date_input(f"Фактическая дата прибытия авто #{car_id}", key=f"fact_arr_{car_id}")
+                        fact_arr = st.date_input(f"Фактическая дата прибытия", key=f"fact_arr_{car_id}")
                     with col_arr2:
-                        if st.button("✅ Отметить прибытие", key=f"btn_arrive_{car_id}", type="primary"):
+                        if st.button("✅ Отметить", key=f"btn_arrive_{car_id}", type="primary"):
                             affected = mark_car_arrived(car_id, fact_arr.strftime('%d.%m.%Y'))
-                            st.success(f"✅ Авто #{car_id} прибыло на склад Алматы ({fact_arr.strftime('%d.%m.%Y')}). "
-                                        f"Перенесено счетов в «Прибыл на склад Алматы»: {affected}.")
-                            st.rerun()
+                            st.success(f"✅ Авто #{car_id} прибыло ({fact_arr.strftime('%d.%m.%Y')}). Перенесено счетов: {affected}.")
                             sync_db_to_github()
+                            st.rerun()
                     with col_arr3:
                         if st.button("🗑️ Удалить", key=f"btn_del_car_{car_id}"):
                             delete_car_by_id(car_id)
