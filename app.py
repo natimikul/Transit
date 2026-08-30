@@ -1130,7 +1130,7 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_est_arrival = st.text_input("План. дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
 
                     edit_docs = st.text_area("№ документов (ПкЦБ)", value="\n".join(docs_list), key=f"edit_docs_{car_id}", height=60)
-                    edit_rkz = st.text_area("№ РКЗ (СЧКЗ) — ручной ввод", value="\n".join(rkz_list), key=f"edit_rkz_{car_id}", height=60)
+                    edit_rkz = st.text_area(f"№ РКЗ (СЧКЗ) — всего {len(combined_rkz)} (ручных: {len(rkz_list)}, из счетов: {len(auto_rkz_list)})", value="\n".join(combined_rkz), key=f"edit_rkz_{car_id}", height=60)
 
                     if st.button("💾 Сохранить изменения авто", key=f"btn_save_edit_car_{car_id}"):
                         edit_docs_clean = "\n".join([d.strip() for d in edit_docs.split("\n") if d.strip()])
