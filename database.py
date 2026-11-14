@@ -3,6 +3,7 @@ import pandas as pd
 import base64
 import json
 import os
+import datetime
 
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transit_system.db")
 
@@ -141,6 +142,8 @@ def init_db():
     # Миграции для auto_in_transit
     _add_column_if_missing(cursor, "auto_in_transit", "fact_arrival_date", "TEXT")
     _add_column_if_missing(cursor, "auto_in_transit", "is_arrived", "INTEGER DEFAULT 0")
+    # Пометка «пополнение склада»: ПкЦБ без счетов (самостоятельный документ)
+    _add_column_if_missing(cursor, "auto_in_transit", "is_replenishment", "INTEGER DEFAULT 0")
 
     # Таблица счетов
     cursor.execute('''
@@ -179,6 +182,20 @@ def init_db():
     _add_column_if_missing(cursor, "invoices", "final_trip_name", "TEXT")
     _add_column_if_missing(cursor, "invoices", "final_trip_date", "TEXT")
     _add_column_if_missing(cursor, "invoices", "reject_date", "TEXT")
+    _add_column_if_missing(cursor, "invoices", "advert", "TEXT")
+
+    # Таблица архива — та же структура, что invoices (+ archived_at).
+    # Создаётся динамически из фактического набора колонок invoices,
+    # поэтому уже созданные миграции попадают в архив автоматически.
+    cursor.execute("SELECT name, type FROM pragma_table_info('invoices')")
+    col_defs = ", ".join(f"{c[0]} {c[1]}" for c in cursor.fetchall() if c[0] != "id")
+    cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS invoices_archive (
+            id INTEGER PRIMARY KEY,
+            {col_defs},
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
     conn.commit()
     conn.close()
@@ -303,6 +320,7 @@ def update_invoices_batch(df_updates):
         'order_number', 'rated_date', 'trip_date',
         'delivery_date_to_client', 'rzc_number', 'auto_id',
         'final_trip_name', 'final_trip_date', 'reject_date',
+        'advert',
     ]
     present_fields = [f for f in allowed_fields if f in df_updates.columns]
     if not present_fields:
@@ -400,16 +418,21 @@ def get_invoices_by_auto_id(auto_id):
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С АВТО ==========
 
 def save_car_to_db(dispatch_date, country, location, doc_number, rkz_number,
-                    estimated_arrival, user="admin"):
-    """Сохраняет авто в таблицу auto_in_transit, возвращает id."""
+                    estimated_arrival, user="admin", is_replenishment=0):
+    """Сохраняет авто в таблицу auto_in_transit, возвращает id.
+
+    is_replenishment=1 — ПкЦБ «пополнение склада»: самостоятельный документ
+    без счетов СЧКЗ.
+    """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
     INSERT INTO auto_in_transit (dispatch_date, country, location, doc_number,
-                                  rkz_number, estimated_arrival, added_by, log_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'Создан')
+                                  rkz_number, estimated_arrival, added_by, log_status,
+                                  is_replenishment)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Создан', ?)
     ''', (dispatch_date, country, location, doc_number, rkz_number,
-          estimated_arrival, user))
+          estimated_arrival, user, int(is_replenishment)))
     conn.commit()
     auto_id = cursor.lastrowid
     conn.close()
@@ -620,5 +643,232 @@ def get_invoices_for_email(status):
            FROM invoices WHERE status = ? ORDER BY timestamp DESC""",
         conn, params=(status,)
     )
+    conn.close()
+    return df
+
+
+# ========== АРХИВ СЧЕТОВ (invoices_archive) ==========
+#
+# Цель: не держать в основной таблице «мёртвые» счета (статусы «Отгружено
+# клиенту» и «Отказ»), чтобы фильтры, отчёты и импорт работали быстрее.
+# Архив хранится в той же БД (таблица invoices_archive), всегда доступен
+# для поиска и выгрузки, счета можно вернуть обратно.
+
+ARCHIVE_STATUSES = ("Отгружено клиенту", "Отказ")
+
+# Фактическая дата закрытия счёта: для «Отгружено клиенту» — дата отгрузки
+# клиенту, для «Отказа» — дата отказа. Если поля пусты — берём iso-дату из
+# invoice_date последней редакции (timestamp).
+ARCHIVE_DATE_BY_STATUS = {
+    "Отгружено клиенту": "delivery_date_to_client",
+    "Отказ": "reject_date",
+}
+
+
+def _parse_date_flexible(*values):
+    """Пытается распарсить дату в любом из используемых форматов.
+    Возвращает datetime.date или None."""
+    for v in values:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y",
+                    "%Y-%m-%d %H:%M:%S", "%d.%m.%Y %H:%M:%S"):
+            try:
+                return datetime.datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        try:
+            return datetime.datetime.fromisoformat(s).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _get_archive_columns(conn):
+    """Список колонок таблицы invoices (для копирования в архив)."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM pragma_table_info('invoices')")
+    return [r[0] for r in cursor.fetchall()]
+
+
+def get_archive_candidates(days_threshold=7, statuses=None):
+    """
+    Возвращает DataFrame со счетами-кандидатами на архивацию:
+    статусы «Отгружено клиенту» / «Отказ», у которых дата отгрузки клиенту
+    (или дата отказа) старше days_threshold дней.
+    Колонка 'archive_date' — дата, по которой принималось решение.
+    """
+    statuses = list(statuses or ARCHIVE_STATUSES)
+    cutoff = datetime.date.today() - datetime.timedelta(days=int(days_threshold))
+
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    status_ph = ",".join("?" * len(statuses))
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT * FROM invoices WHERE status IN ({status_ph}) ORDER BY timestamp DESC",
+        list(statuses),
+    )
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    candidates = []
+    for row in rows:
+        status = row.get("status")
+        primary_field = ARCHIVE_DATE_BY_STATUS.get(status)
+        archive_date = _parse_date_flexible(
+            row.get(primary_field), row.get("timestamp")
+        )
+        if archive_date is not None and archive_date <= cutoff:
+            row["archive_date"] = archive_date.strftime("%d.%m.%Y")
+            row["archive_basis"] = primary_field or "timestamp"
+            candidates.append(row)
+    return pd.DataFrame(candidates)
+
+
+def archive_old_invoices(days_threshold=7, statuses=None):
+    """
+    Переносит в архив все счета-кандидаты (см. get_archive_candidates).
+    Возвращает (archived_count, list_of_doc_numbers).
+    """
+    candidates = get_archive_candidates(days_threshold, statuses)
+    if candidates.empty:
+        return 0, []
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    invoice_cols = _get_archive_columns(conn)
+
+    archived_docs = []
+    for _, row in candidates.iterrows():
+        inv_id = int(row["id"])
+        placeholders = ",".join("?" * len(invoice_cols))
+        cursor.execute(
+            f"INSERT OR REPLACE INTO invoices_archive ({','.join(invoice_cols)}) "
+            f"SELECT {','.join(invoice_cols)} FROM invoices WHERE id = ?",
+            (inv_id,),
+        )
+        cursor.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
+        archived_docs.append(row.get("doc_number") or f"#{inv_id}")
+
+    conn.commit()
+    conn.close()
+    return len(archived_docs), archived_docs
+
+
+def archive_invoice_ids(invoice_ids):
+    """Ручная архивация произвольных счетов по списку id.
+    Возвращает количество перенесённых счетов."""
+    if not invoice_ids:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    invoice_cols = _get_archive_columns(conn)
+    placeholders = ",".join("?" * len(invoice_cols))
+    count = 0
+    for inv_id in invoice_ids:
+        cursor.execute(
+            f"INSERT OR REPLACE INTO invoices_archive ({','.join(invoice_cols)}) "
+            f"SELECT {','.join(invoice_cols)} FROM invoices WHERE id = ?",
+            (inv_id,),
+        )
+        if cursor.rowcount > 0:
+            cursor.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
+            count += 1
+    conn.commit()
+    conn.close()
+    return count
+
+
+def restore_from_archive(invoice_ids):
+    """Возвращает счета из архива в основную таблицу (по id архива, он равен исходному).
+    Возвращает количество восстановленных счетов."""
+    if not invoice_ids:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    invoice_cols = _get_archive_columns(conn)
+    placeholders = ",".join("?" * len(invoice_cols))
+    count = 0
+    for inv_id in invoice_ids:
+        cursor.execute("SELECT * FROM invoices_archive WHERE id = ?", (inv_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            continue
+        names = [d[0] for d in cursor.description]
+        data = dict(zip(names, rows[0]))
+        data.pop("archived_at", None)
+        try:
+            cursor.execute(
+                f"INSERT OR REPLACE INTO invoices ({','.join(invoice_cols)}) "
+                f"VALUES ({placeholders})",
+                [data.get(c) for c in invoice_cols],
+            )
+            cursor.execute("DELETE FROM invoices_archive WHERE id = ?", (inv_id,))
+            count += 1
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+    conn.commit()
+    conn.close()
+    return count
+
+
+def delete_archive_rows(invoice_ids):
+    """Безвозвратно удаляет записи из архива. Возвращает количество удалённых."""
+    if not invoice_ids:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    ph = ",".join("?" * len(invoice_ids))
+    cursor.execute(f"DELETE FROM invoices_archive WHERE id IN ({ph})", list(invoice_ids))
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def get_archive_invoices(search=None, status_filter=None, start_dt=None, end_dt=None):
+    """
+    Счета из архива для просмотра: поиск по № счета/клиенту, фильтры по статусу
+    и периоду (по archived_at). Сортировка по дате архивации (свежие сверху).
+    """
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT * FROM invoices_archive ORDER BY archived_at DESC, id DESC", conn)
+    conn.close()
+    if df.empty:
+        return df
+
+    if search:
+        s = search.strip().lower()
+        mask = df["doc_number"].fillna("").astype(str).str.lower().str.contains(s) | \
+               df["client"].fillna("").astype(str).str.lower().str.contains(s) | \
+               df["advert"].fillna("").astype(str).str.lower().str.contains(s)
+        df = df[mask]
+    if status_filter:
+        df = df[df["status"].isin(status_filter)]
+    if start_dt is not None and end_dt is not None:
+        # Фильтр по дате отгрузки клиенту / дате отказа
+        start_d = start_dt if isinstance(start_dt, datetime.date) else _parse_date_flexible(start_dt)
+        end_d = end_dt if isinstance(end_dt, datetime.date) else _parse_date_flexible(end_dt)
+        if start_d is not None and end_d is not None:
+            parsed = []
+            for _, row in df.iterrows():
+                f = ARCHIVE_DATE_BY_STATUS.get(row.get("status")) or "delivery_date_to_client"
+                parsed.append(_parse_date_flexible(row.get(f)))
+            parsed = pd.Series(parsed, index=df.index)
+            mask = parsed.apply(lambda d: d is not None and start_d <= d <= end_d)
+            df = df[mask]
+    return df.reset_index(drop=True)
+
+
+def get_archive_stats():
+    """Сводка по архиву: количество записей и распределение по статусам."""
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT status, COUNT(*) AS cnt FROM invoices_archive GROUP BY status", conn)
     conn.close()
     return df
