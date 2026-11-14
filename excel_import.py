@@ -31,7 +31,7 @@ STATUS_MAP = {
     "к сборке": "В сборке",
     "отгружен": "Отгружен",
     "обработан": "Обработан",
-    "выгружен в wms": "Создан",
+    "выгружен в wms": "Выгружен в WMS",
     "не обрабатывать": "Создан",
     "отменен": "Отменен",
 }
@@ -66,6 +66,22 @@ def map_status_1c(status_1c):
     return STATUS_MAP.get(str(status_1c).strip().lower())
 
 
+def _identify_extra_columns(header_labels):
+    """По подписям заголовков определяет, где Реклама, а где Тип разрешения/№ заказа.
+    Возвращает (advert_col, perm_col, order_col)."""
+    advert_col = perm_col = order_col = None
+    for idx, lab in (header_labels or {}).items():
+        if not lab:
+            continue
+        if "реклам" in lab and advert_col is None:
+            advert_col = idx
+        elif "разрешен" in lab and perm_col is None:
+            perm_col = idx
+        elif "заказ" in lab and order_col is None:
+            order_col = idx
+    return advert_col, perm_col, order_col
+
+
 def parse_excel_1c(uploaded_file):
     """
     Читает загруженный Excel-файл 1С и возвращает DataFrame с распознанными
@@ -97,6 +113,13 @@ def parse_excel_1c(uploaded_file):
 
     # Используем заголовок для проверки, но колонки нумеруем по порядку
     # (в 1С порядок колонок фиксирован)
+    # Запоминаем подписи заголовков, чтобы распознать нестандартные колонки
+    # (Реклама / Тип разрешения / Номер заказа могут меняться местами)
+    header_labels = {}
+    if len(raw_df) > 0 and header_idx < len(raw_df):
+        header_values = [str(v).strip().lower() for v in raw_df.iloc[header_idx].tolist()]
+        header_labels = {i + 1: hv for i, hv in enumerate(header_values)}
+
     raw_df = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
     raw_df.columns = list(range(1, len(raw_df.columns) + 1))
 
@@ -111,7 +134,7 @@ def parse_excel_1c(uploaded_file):
         return pd.DataFrame(), {"error": "В файле нет строк с номерами счетов."}
 
     # Применяем исправление кодировки к строковым колонкам
-    string_cols = [c for c in [1, 2, 3, 4, 5, 7, 9, 11] if c in raw_df.columns]
+    string_cols = [c for c in [1, 2, 3, 4, 5, 7, 9, 10, 11] if c in raw_df.columns]
     for col in string_cols:
         raw_df[col] = raw_df[col].apply(fix_encoding)
 
@@ -136,6 +159,15 @@ def parse_excel_1c(uploaded_file):
     }
 
     # Формируем итоговый DataFrame
+    advert_col, perm_col, order_col = _identify_extra_columns(header_labels)
+
+    # Подстраховка: если колонка 10 есть, но заголовок не опознан
+    # (и это не «Номер заказа») — считаем её Рекламой.
+    if advert_col is None and 10 in valid_df.columns:
+        lab10 = (header_labels.get(10) or "")
+        if "заказ" not in lab10:
+            advert_col = 10
+
     result = pd.DataFrame({
         "doc_number": valid_df[1].astype(str).str.strip() if 1 in valid_df.columns else "",
         "invoice_date": valid_df[2].astype(str).str.strip() if 2 in valid_df.columns else "",
@@ -144,7 +176,9 @@ def parse_excel_1c(uploaded_file):
         "status_1c": valid_df[5].astype(str).str.strip() if 5 in valid_df.columns else "",
         "client": valid_df[7].astype(str).str.strip() if 7 in valid_df.columns else "",
         "warehouse": valid_df["warehouse_norm"],
-        "order_number": valid_df[11].astype(str).str.strip() if 11 in valid_df.columns else "",
+        "advert": valid_df[advert_col].astype(str).str.strip() if advert_col and advert_col in valid_df.columns else "",
+        "perm_type": valid_df[perm_col].astype(str).str.strip() if perm_col and perm_col in valid_df.columns else "",
+        "order_number": valid_df[order_col].astype(str).str.strip() if order_col and order_col in valid_df.columns else "",
     })
 
     # Внутренний статус
@@ -157,10 +191,37 @@ def parse_excel_1c(uploaded_file):
     return result, stats
 
 
+def _split_by_perm_type(perm_type, status_1c):
+    """
+    Приоритет: тип разрешения (колонка 11 файла 1С) ВАЖНЕЕ статуса 1С.
+      «Требует разрешения на вывоз» → «В сборке, ожидает разрешения», флаг РБ (вкладка Разрешения)
+      «Требует разрешения KZ»      → «В сборке, ожидает разрешения», флаг КЗ (вкладка Разрешения)
+      1С «К сборке»                → «В сборке»
+      «Прямая отгрузка» / «Получено разрешение KZ» / прочее → «Создан»
+    Счета, уже ушедшие в путь и дальше, защищает import_invoices_to_db —
+    их загрузка файла не переписывает.
+    """
+    pt = str(perm_type or "").strip().lower()
+
+    if "требует" in pt:
+        if "вывоз" in pt:
+            return "В сборке, ожидает разрешения", 1, 0
+        # «Требует разрешения KZ» и любой другой «требует» без «вывоз» — считаем КЗ
+        return "В сборке, ожидает разрешения", 0, 1
+
+    base = map_status_1c(status_1c)
+    if base == "В сборке":
+        return "В сборке", 0, 0
+    return "Создан", 0, 0
+
+
 def import_invoices_to_db(parsed_df, added_by="admin"):
     """
     Сохраняет распознанные счета в БД.
-    Если doc_number уже существует — обновляет (не дублирует).
+    Если doc_number уже существует — обновляет (не дублирует):
+      • статус/флаги разрешений — только для счетов, ещё не ушедших дальше;
+        «Требует разрешения KZ/на вывоз» → «В сборке, ожидает разрешения»;
+      • Реклама — заполняется ТОЛЬКО если поле пустое (старые значения не затираем).
 
     Возвращает: (saved_count, updated_count, skipped_count)
     """
@@ -173,6 +234,11 @@ def import_invoices_to_db(parsed_df, added_by="admin"):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
+    # Статусы, на которые импорт не влияет (счёт уже в пути/на складе/отгружен)
+    protected_statuses = ("В пути", "Прибыл на склад Алматы",
+                          "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ")
+    protected_ph = ",".join("?" * len(protected_statuses))
+
     saved_count = 0
     updated_count = 0
     skipped_count = 0
@@ -183,59 +249,89 @@ def import_invoices_to_db(parsed_df, added_by="admin"):
             skipped_count += 1
             continue
 
+        def clean(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            s = str(v).strip()
+            return "" if s.lower() in ("", "nan", "none") else s
+
+        invoice_date = clean(row.get("invoice_date"))
+        client = clean(row.get("client"))
+        warehouse = clean(row.get("warehouse"))
+        status = clean(row.get("status")) or "Создан"
+        status_1c = clean(row.get("status_1c"))
+        trip_name = clean(row.get("trip_name"))
+        trip_date = clean(row.get("trip_date"))
+        advert = clean(row.get("advert"))
+        perm_type = clean(row.get("perm_type"))
+        order_number = clean(row.get("order_number"))
+
+        new_status, new_perm_rb, new_perm_kz = _split_by_perm_type(perm_type, status_1c)
+
         # Проверяем, существует ли уже такой счёт
         cursor.execute(
-            "SELECT id FROM invoices WHERE doc_number = ?", (doc_number,)
+            "SELECT id, status, perm_rb, perm_kz, advert FROM invoices WHERE doc_number = ?",
+            (doc_number,)
         )
         existing = cursor.fetchone()
 
         if existing:
-            # Обновляем статус и рейс (если счёт уже был загружен ранее)
-            existing_id = existing[0]
+            existing_id, ex_status, ex_perm_rb, ex_perm_kz, ex_advert = existing
+
+            if ex_status in protected_statuses:
+                # Счёт уже продвинут — обновляем только справочные поля
+                cursor.execute('''
+                    UPDATE invoices SET
+                        status_1c = ?, trip_name = ?, trip_date = ?,
+                        invoice_date = ?, client = ?, warehouse = ?
+                    WHERE id = ?
+                ''', (status_1c, trip_name, trip_date, invoice_date,
+                      client, warehouse, existing_id))
+                skipped_count += 1
+                continue
+
+            # Обновляем базовые поля
             cursor.execute('''
                 UPDATE invoices SET
-                    status_1c = ?,
-                    trip_name = ?,
-                    trip_date = ?,
-                    invoice_date = ?,
-                    client = ?,
-                    warehouse = ?,
-                    order_number = ?
-                WHERE id = ? AND (status NOT IN ('В пути', 'Прибыл на склад Алматы',
-                                                  'Готов к отгрузке клиенту', 'Отгружено клиенту'))
-            ''', (
-                row.get("status_1c"),
-                row.get("trip_name"),
-                row.get("trip_date"),
-                row.get("invoice_date"),
-                row.get("client"),
-                row.get("warehouse"),
-                row.get("order_number"),
-                existing_id,
-            ))
-            if cursor.rowcount > 0:
-                updated_count += 1
-            else:
-                skipped_count += 1
+                    status_1c = ?, trip_name = ?, trip_date = ?,
+                    invoice_date = ?, client = ?, warehouse = ?
+                WHERE id = ?
+            ''', (status_1c, trip_name, trip_date, invoice_date,
+                  client, warehouse, existing_id))
+            updated_count += 1
+
+            # СТАТУС: обновляем, если счёт ещё не ушёл дальше 1С-этапа «сборки»
+            # («Создан», «Отгружен» = 1С отгрузил со склада, «Обработан»)
+            if ex_status in ("Создан", "Отгружен", "Обработан"):
+                cursor.execute(
+                    "UPDATE invoices SET status = ?, perm_rb = ?, perm_kz = ? WHERE id = ?",
+                    (new_status, new_perm_rb or int(ex_perm_rb or 0),
+                     new_perm_kz or int(ex_perm_kz or 0), existing_id)
+                )
+            elif ex_status == "В сборке":
+                # Флаги разрешений: дозаполняем недостающие (0) из файла
+                if new_perm_kz and not int(ex_perm_kz or 0):
+                    cursor.execute("UPDATE invoices SET perm_kz = 1 WHERE id = ?", (existing_id,))
+                if new_perm_rb and not int(ex_perm_rb or 0):
+                    cursor.execute("UPDATE invoices SET perm_rb = 1 WHERE id = ?", (existing_id,))
+
+            # РЕКЛАМА: заполняем только пустое поле
+            if advert and (ex_advert is None or str(ex_advert).strip() == ""):
+                cursor.execute("UPDATE invoices SET advert = ? WHERE id = ?",
+                               (advert, existing_id))
         else:
             # Новый счёт — вставляем
             cursor.execute('''
                 INSERT INTO invoices (
                     doc_number, invoice_date, client, warehouse, status, status_1c,
-                    trip_name, trip_date, order_number, source_sheet, added_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    trip_name, trip_date, advert, perm_rb, perm_kz,
+                    order_number, source_sheet, added_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                doc_number,
-                row.get("invoice_date"),
-                row.get("client"),
-                row.get("warehouse"),
-                row.get("status"),
-                row.get("status_1c"),
-                row.get("trip_name"),
-                row.get("trip_date"),
-                row.get("order_number"),
-                "excel_1c",
-                added_by,
+                doc_number, invoice_date, client, warehouse,
+                new_status, status_1c, trip_name, trip_date,
+                advert or None, new_perm_rb, new_perm_kz,
+                order_number or None, "excel_1c", added_by,
             ))
             saved_count += 1
 
