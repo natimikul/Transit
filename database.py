@@ -197,6 +197,16 @@ def init_db():
         )
     ''')
 
+    # Миграции для invoices_archive: у старых БД архив мог быть создан
+    # до появления новых колонок в invoices — добавляем недостающие.
+    for _col, _typ in [("order_number", "TEXT"), ("rated_date", "TEXT"),
+                       ("trip_date", "TEXT"), ("delivery_date_to_client", "TEXT"),
+                       ("rzc_number", "TEXT"), ("auto_id", "INTEGER"),
+                       ("rated_by", "TEXT"), ("final_trip_name", "TEXT"),
+                       ("final_trip_date", "TEXT"), ("reject_date", "TEXT"),
+                       ("advert", "TEXT")]:
+        _add_column_if_missing(cursor, "invoices_archive", _col, _typ)
+
     conn.commit()
     conn.close()
 
