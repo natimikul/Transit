@@ -999,10 +999,18 @@ if current_mode == "Админ-панель" and is_admin:
 
                             row_to_id = {pos: int(df.iloc[pos]['id']) for pos in range(len(df))}
 
+                            # Распределяем ТОЛЬКО отмеченные счета: галочка «✅ Отметка»
+                            # в строке или общий чекбокс «☑️ Отметить все счета этой таблицы».
+                            # Снятая галочка у строки исключает её даже при «Отметить все».
                             rows_to_update = []
                             count_to_permission = 0
                             count_to_assembly = 0
                             for pos in range(len(df)):
+                                changes = edited_rows.get(pos, {})
+                                if changes.get('✅ Отметка') is False:
+                                    continue
+                                if not (sel_all_created or changes.get('✅ Отметка') is True):
+                                    continue
                                 inv_id = row_to_id.get(pos)
                                 if inv_id is None or inv_id in to_delete_ids:
                                     continue
@@ -1010,7 +1018,6 @@ if current_mode == "Админ-панель" and is_admin:
                                 perm_rb = int(df.iloc[pos].get('perm_rb', 0) or 0)
                                 perm_kz = int(df.iloc[pos].get('perm_kz', 0) or 0)
 
-                                changes = edited_rows.get(pos, {})
                                 if 'Разрешение РБ' in changes:
                                     perm_rb = 1 if bool(changes['Разрешение РБ']) else 0
                                 if 'Разрешение КЗ' in changes:
@@ -1047,8 +1054,11 @@ if current_mode == "Админ-панель" and is_admin:
                                 parts.append(f"удалено: {len(to_delete_ids)}")
                             if parts:
                                 st.success(f"✅ Распределено: {', '.join(parts)}.")
-                            else:
-                                st.info("Нет счетов для распределения.")
+                            elif not to_delete_ids:
+                                st.warning("Отметьте счета галочкой «✅ Отметка» "
+                                           "(или включите «☑️ Отметить все счета этой таблицы»).")
+                            # Сбрасываем «Отметить все», чтобы не применить случайно к новым счетам
+                            st.session_state[f"sel_all_created_{key_suffix}"] = False
                             st.rerun()
                             sync_db_to_github()
                         except Exception as e:
