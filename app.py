@@ -706,7 +706,7 @@ if current_mode == "Архив":
 if current_mode == "Админ-панель" and is_admin:
     st.subheader("⚙️ Панель администратора")
 
-    col_sync1, col_sync2 = st.columns([1, 3])
+    col_sync1, col_sync2, col_sync3 = st.columns([1, 1, 2])
     with col_sync1:
         if st.button("💾 Сохранить БД в GitHub", type="primary", key="btn_sync_db"):
             with st.spinner("Сохранение..."):
@@ -716,6 +716,23 @@ if current_mode == "Админ-панель" and is_admin:
             else:
                 st.error("❌ Не удалось сохранить. Проверьте токен GitHub в Secrets.")
     with col_sync2:
+        import os as _os
+        import database as _dbmod
+        if _os.path.exists(_dbmod.DB_NAME):
+            with open(_dbmod.DB_NAME, "rb") as f:
+                db_bytes = f.read()
+            today_str_dl = datetime.date.today().strftime('%d.%m.%Y')
+            st.download_button(
+                label="📥 Скачать БД на компьютер",
+                data=db_bytes,
+                file_name=f"transit_system_backup_{today_str_dl}.db",
+                mime="application/octet-stream",
+                key="btn_download_db",
+                help="Сделайте это ПЕРЕД загрузкой новых отчётов — файл можно будет загрузить обратно (откат)."
+            )
+        else:
+            st.warning("БД не найдена.")
+    with col_sync3:
         gh_status, gh_msg = check_github_token()
         if gh_status == "ok":
             st.caption(f"✅ {gh_msg}")
@@ -794,6 +811,27 @@ if current_mode == "Админ-панель" and is_admin:
                         st.dataframe(parsed_df[preview_cols], use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(f"Не удалось обработать файл. Ошибка: {e}")
+
+        st.markdown("---")
+        st.markdown("#### 🗄️ Восстановление из резервной копии БД (.db)")
+        st.caption("Загрузите файл transit_system_backup_ДД.ММ.ГГГГ.db (резервная копия). Текущая БД будет заменена — так можно откатить изменения после импорта.")
+        uploaded_backup = st.file_uploader("Перетащите .db файл:", type=["db"], key="uploader_backup_db")
+        if uploaded_backup is not None:
+            try:
+                db_bytes = uploaded_backup.read()
+                if db_bytes[:16] != b"SQLite format 3\x00":
+                    st.error("Файл не является валидной SQLite БД.")
+                else:
+                    import os as _os
+                    import database as _dbmod
+                    with open(_dbmod.DB_NAME, "wb") as f:
+                        f.write(db_bytes)
+                    init_db()  # применяем миграции к старым бэкапам (например is_replenishment)
+                    st.success(f"✅ БД восстановлена из резервной копии ({len(db_bytes)} байт).")
+                    sync_db_to_github()
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Не удалось восстановить БД. Ошибка: {e}")
 
         st.markdown("---")
         st.markdown("#### 📦 Импорт из файла экспорта БД (db_export.xlsx)")
