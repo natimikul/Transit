@@ -1382,9 +1382,12 @@ if current_mode == "Админ-панель" and is_admin:
                         try:
                             today_str = datetime.date.today().strftime('%d.%m.%Y')
 
-                            # Собираем данные каждого отмеченного счёта и группируем по его ПкЦБ
+                            # Собираем данные каждого отмеченного счёта и группируем по его ПкЦБ.
+                            # Счёт с пустым ПкЦБ отправляется с первым указанным ПкЦБ (один ПкЦБ = одно авто).
                             rows_by_pkcb = {}
                             unassigned = []
+                            empty_pkcb_docs = []
+                            first_pkcb = pkcb_list[0] if pkcb_list else ''
                             for pos in range(len(df)):
                                 inv_id = row_to_id.get(pos)
                                 if inv_id is None or inv_id not in selected_ids:
@@ -1415,10 +1418,15 @@ if current_mode == "Админ-панель" and is_admin:
                                     pkcb_val = str(changes.get('ПкЦБ', '') or '').strip()
                                 if not pkcb_val:
                                     pkcb_val = str(df.iloc[pos].get('pkcb', '') or '').strip()
+                                if not pkcb_val:
+                                    # Пустой ПкЦБ у счета — отправляем с первым указанным ПкЦБ
+                                    doc_num = str(df.iloc[pos].get('doc_number', '') or '').strip()
+                                    empty_pkcb_docs.append(doc_num)
+                                    pkcb_val = first_pkcb
 
                                 if pkcb_val not in pkcb_list:
                                     doc_num = str(df.iloc[pos].get('doc_number', '') or '').strip()
-                                    unassigned.append(f"{doc_num} (ПкЦБ: {pkcb_val or '—'})")
+                                    unassigned.append(f"{doc_num} (ПкЦБ: {pkcb_val})")
                                     continue
 
                                 note_val = changes.get('Примечание')
@@ -1439,64 +1447,76 @@ if current_mode == "Админ-панель" and is_admin:
                                     'plan_arrival': plan_arrival, 'note': note_val,
                                 })
 
-                            # 1) Авто «пополнение склада» — без счетов
-                            created_cars = []
-                            for p in repl_list:
-                                aid = save_car_to_db(
-                                    dispatch_date=today_str,
-                                    country=car_country.strip(),
-                                    location="",
-                                    doc_number=p,
-                                    rkz_number="",
-                                    estimated_arrival="",
-                                    is_replenishment=1,
-                                )
-                                created_cars.append((aid, p, 0))
+                            if not rows_by_pkcb and not repl_list:
+                                st.warning("Отмеченные счета не привязаны: ПкЦБ счетов не совпадает с указанными выше. "
+                                           "Очистите колонку «ПкЦБ» у счетов или укажите их ПкЦБ в списке. Авто НЕ созданы.")
+                            else:
+                                # 1) Авто «пополнение склада» — без счетов
+                                created_cars = []
+                                for p in repl_list:
+                                    aid = save_car_to_db(
+                                        dispatch_date=today_str,
+                                        country=car_country.strip(),
+                                        location="",
+                                        doc_number=p,
+                                        rkz_number="",
+                                        estimated_arrival="",
+                                        is_replenishment=1,
+                                    )
+                                    created_cars.append((aid, p, 0))
 
-                            # 2) Авто с счетами: один ПкЦБ = одно авто
-                            for p in pkcb_list:
-                                aid = save_car_to_db(
-                                    dispatch_date=today_str,
-                                    country=car_country.strip(),
-                                    location="",
-                                    doc_number=p,
-                                    rkz_number="",
-                                    estimated_arrival="",
-                                )
-                                linked = link_auto_to_invoices_by_pkcb(aid, [p])
-                                created_cars.append((aid, p, len(rows_by_pkcb.get(p, [])), linked))
+                                # 2) Авто с счетами: один ПкЦБ = одно авто.
+                                # Создаем авто ТОЛЬКО для ПкЦБ, на которые уходят отмеченные счета
+                                # (пустых авто без счетов больше не будет).
+                                for p in rows_by_pkcb:
+                                    aid = save_car_to_db(
+                                        dispatch_date=today_str,
+                                        country=car_country.strip(),
+                                        location="",
+                                        doc_number=p,
+                                        rkz_number="",
+                                        estimated_arrival="",
+                                    )
+                                    linked = link_auto_to_invoices_by_pkcb(aid, [p])
+                                    created_cars.append((aid, p, len(rows_by_pkcb.get(p, [])), linked))
 
-                            # 3) Переводим счета в «В пути» со своим авто
-                            auto_by_pkcb = {c[1]: c[0] for c in created_cars}
-                            rows_to_update = []
-                            for p, group in rows_by_pkcb.items():
-                                auto_id = auto_by_pkcb[p]
-                                for item in group:
-                                    upd_row = {'id': item['id'], 'status': 'В пути', 'auto_id': auto_id}
-                                    if item['ship_date']:
-                                        upd_row['fact_ship_date'] = item['ship_date']
-                                    if item['transit']:
-                                        upd_row['transit_days'] = int(item['transit'])
-                                    upd_row['pkcb'] = p
-                                    if item['plan_arrival']:
-                                        upd_row['plan_arrival'] = item['plan_arrival']
-                                    if item['note'] is not None:
-                                        upd_row['note'] = item['note']
-                                    rows_to_update.append(upd_row)
+                                # 3) Переводим счета в «В пути» со своим авто
+                                auto_by_pkcb = {c[1]: c[0] for c in created_cars}
+                                rows_to_update = []
+                                for p, group in rows_by_pkcb.items():
+                                    auto_id = auto_by_pkcb[p]
+                                    for item in group:
+                                        upd_row = {'id': item['id'], 'status': 'В пути', 'auto_id': auto_id}
+                                        if item['ship_date']:
+                                            upd_row['fact_ship_date'] = item['ship_date']
+                                        if item['transit']:
+                                            upd_row['transit_days'] = int(item['transit'])
+                                        upd_row['pkcb'] = p
+                                        if item['plan_arrival']:
+                                            upd_row['plan_arrival'] = item['plan_arrival']
+                                        if item['note'] is not None:
+                                            upd_row['note'] = item['note']
+                                        rows_to_update.append(upd_row)
 
-                            if rows_to_update:
-                                update_invoices_batch(pd.DataFrame(rows_to_update))
+                                if rows_to_update:
+                                    update_invoices_batch(pd.DataFrame(rows_to_update))
 
-                            parts = []
-                            for c in created_cars:
-                                if len(c) == 4:
-                                    parts.append(f"#{c[0]} ({c[1]} — {c[2]} счетов, привязано по ПкЦБ: {c[3]})")
-                                else:
-                                    parts.append(f"#{c[0]} ({c[1]} — 📦 пополнение склада)")
-                            st.success("✅ Созданы авто: " + "; ".join(parts))
-                            if unassigned:
-                                st.warning("Не отправлены (ПкЦБ счёта не входит в список выше): "
-                                           + ", ".join(unassigned))
+                                parts = []
+                                for c in created_cars:
+                                    if len(c) == 4:
+                                        parts.append(f"#{c[0]} ({c[1]} — {c[2]} счетов, привязано по ПкЦБ: {c[3]})")
+                                    else:
+                                        parts.append(f"#{c[0]} ({c[1]} — 📦 пополнение склада)")
+                                if parts:
+                                    st.success("✅ Созданы авто: " + "; ".join(parts))
+                                if rows_to_update:
+                                    st.success(f"✅ Отправлено в «В пути»: {len(rows_to_update)} счетов.")
+                                if empty_pkcb_docs:
+                                    st.info(f"Счета с пустым ПкЦБ отправлены с авто «{first_pkcb}»: "
+                                            + ", ".join(empty_pkcb_docs))
+                                if unassigned:
+                                    st.warning("Не отправлены (ПкЦБ счёта не входит в список выше): "
+                                               + ", ".join(unassigned))
                             st.rerun()
                             sync_db_to_github()
                         except Exception as e:
