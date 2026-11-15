@@ -1451,40 +1451,99 @@ if current_mode == "Админ-панель" and is_admin:
                                 st.warning("Отмеченные счета не привязаны: ПкЦБ счетов не совпадает с указанными выше. "
                                            "Очистите колонку «ПкЦБ» у счетов или укажите их ПкЦБ в списке. Авто НЕ созданы.")
                             else:
-                                # 1) Авто «пополнение склада» — без счетов
-                                created_cars = []
-                                for p in repl_list:
-                                    aid = save_car_to_db(
-                                        dispatch_date=today_str,
-                                        country=car_country.strip(),
-                                        location="",
-                                        doc_number=p,
-                                        rkz_number="",
-                                        estimated_arrival="",
-                                        is_replenishment=1,
-                                    )
-                                    created_cars.append((aid, p, 0))
+                                # Поиск активного (не прибывшего) авто, к которому уже привязан ПкЦБ,
+                                # чтобы не плодить дубли одного и того же авто.
+                                def _find_active_car_by_doc(pkcb):
+                                    try:
+                                        df_cars = get_active_cars()
+                                    except Exception:
+                                        return None
+                                    for _, c in df_cars.iterrows():
+                                        docs = [d.strip() for d in str(c.get('doc_number') or '').split("\n") if d.strip()]
+                                        if pkcb in docs:
+                                            return int(c['id'])
+                                    return None
 
-                                # 2) Авто с счетами: один ПкЦБ = одно авто.
-                                # Создаем авто ТОЛЬКО для ПкЦБ, на которые уходят отмеченные счета
-                                # (пустых авто без счетов больше не будет).
+                                created_cars = []
+                                car_id_by_pkcb = {}
+
+                                # Один ПкЦБ с счетами + пополнения склада = ОДНО авто
+                                merge_repl = (len(rows_by_pkcb) == 1 and bool(repl_list))
+                                merged_repl_into = None
+
+                                # 1) Авто с счетами: один ПкЦБ = одно авто.
+                                # Авто создается ТОЛЬКО для ПкЦБ, на которые уходят отмеченные счета.
+                                # Если активное авто с таким ПкЦБ уже есть — используем его (без дублей).
                                 for p in rows_by_pkcb:
-                                    aid = save_car_to_db(
-                                        dispatch_date=today_str,
-                                        country=car_country.strip(),
-                                        location="",
-                                        doc_number=p,
-                                        rkz_number="",
-                                        estimated_arrival="",
-                                    )
-                                    linked = link_auto_to_invoices_by_pkcb(aid, [p])
-                                    created_cars.append((aid, p, len(rows_by_pkcb.get(p, [])), linked))
+                                    existing_id = _find_active_car_by_doc(p)
+                                    if existing_id is not None:
+                                        aid = existing_id
+                                        linked = link_auto_to_invoices_by_pkcb(aid, [p])
+                                        created_cars.append((aid, p, len(rows_by_pkcb.get(p, [])), linked, True))
+                                        if merge_repl:
+                                            merged_repl_into = (p, list(repl_list))
+                                    else:
+                                        doc_field = "\n".join([p] + repl_list) if merge_repl else p
+                                        if merge_repl:
+                                            merged_repl_into = (p, list(repl_list))
+                                        aid = save_car_to_db(
+                                            dispatch_date=today_str,
+                                            country=car_country.strip(),
+                                            location="",
+                                            doc_number=doc_field,
+                                            rkz_number="",
+                                            estimated_arrival="",
+                                        )
+                                        linked = link_auto_to_invoices_by_pkcb(aid, [p])
+                                        created_cars.append((aid, p, len(rows_by_pkcb.get(p, [])), linked, False))
+                                    car_id_by_pkcb[p] = aid
+
+                                # 2) Авто «пополнение склада» — без счетов.
+                                # Если пополнения объединены с единственным авто с счетами — отдельные авто не создаем.
+                                merged_repl_docs = set(merged_repl_into[1]) if merged_repl_into else set()
+                                # Если авто с счетами переиспользовано — добавляем в его документы ПкЦБ пополнений.
+                                if merged_repl_into is not None:
+                                    _aid = car_id_by_pkcb[merged_repl_into[0]]
+                                    _existing = next((c for c in created_cars if c[0] == _aid and len(c) == 5), None)
+                                    if _existing is not None and _existing[4]:  # переиспользованное авто
+                                        try:
+                                            df_cars = get_active_cars()
+                                            _row = df_cars[df_cars['id'] == _aid]
+                                            if not _row.empty:
+                                                _docs = [d.strip() for d in str(_row.iloc[0].get('doc_number') or '').split("\n") if d.strip()]
+                                                _new_docs = _docs + [r for r in repl_list if r not in _docs]
+                                                if _new_docs != _docs:
+                                                    update_car(_aid, _row.iloc[0].get('dispatch_date', ''),
+                                                               _row.iloc[0].get('country', ''),
+                                                               _row.iloc[0].get('location', ''),
+                                                               "\n".join(_new_docs),
+                                                               _row.iloc[0].get('rkz_number', ''),
+                                                               _row.iloc[0].get('estimated_arrival', ''))
+                                        except Exception:
+                                            pass
+
+                                for p in repl_list:
+                                    if p in merged_repl_docs or (merged_repl_into and p in merged_repl_into[1]):
+                                        continue
+                                    existing_id = _find_active_car_by_doc(p)
+                                    if existing_id is not None:
+                                        created_cars.append((existing_id, p, 0, True))
+                                    else:
+                                        aid = save_car_to_db(
+                                            dispatch_date=today_str,
+                                            country=car_country.strip(),
+                                            location="",
+                                            doc_number=p,
+                                            rkz_number="",
+                                            estimated_arrival="",
+                                            is_replenishment=1,
+                                        )
+                                        created_cars.append((aid, p, 0, False))
 
                                 # 3) Переводим счета в «В пути» со своим авто
-                                auto_by_pkcb = {c[1]: c[0] for c in created_cars}
                                 rows_to_update = []
                                 for p, group in rows_by_pkcb.items():
-                                    auto_id = auto_by_pkcb[p]
+                                    auto_id = car_id_by_pkcb[p]
                                     for item in group:
                                         upd_row = {'id': item['id'], 'status': 'В пути', 'auto_id': auto_id}
                                         if item['ship_date']:
@@ -1503,14 +1562,22 @@ if current_mode == "Админ-панель" and is_admin:
 
                                 parts = []
                                 for c in created_cars:
-                                    if len(c) == 4:
-                                        parts.append(f"#{c[0]} ({c[1]} — {c[2]} счетов, привязано по ПкЦБ: {c[3]})")
+                                    if len(c) == 5:
+                                        aid, pkcb, n_inv, linked, reused = c
+                                        tag = "использовано существующее" if reused else "создано"
+                                        extra = f", привязано по ПкЦБ: {linked}" if linked else ""
+                                        parts.append(f"#{aid} ({pkcb} — {n_inv} счетов{extra}, авто {tag})")
                                     else:
-                                        parts.append(f"#{c[0]} ({c[1]} — 📦 пополнение склада)")
+                                        aid, pkcb, _n, reused = c
+                                        tag = "использовано существующее" if reused else "создано"
+                                        parts.append(f"#{aid} ({pkcb} — 📦 пополнение склада, авто {tag})")
                                 if parts:
-                                    st.success("✅ Созданы авто: " + "; ".join(parts))
+                                    st.success("✅ Авто в пути: " + "; ".join(parts))
                                 if rows_to_update:
                                     st.success(f"✅ Отправлено в «В пути»: {len(rows_to_update)} счетов.")
+                                if merged_repl_into:
+                                    st.info(f"ПкЦБ пополнения склада ({', '.join(merged_repl_into[1])}) "
+                                            f"добавлены в документы авто «{merged_repl_into[0]}».")
                                 if empty_pkcb_docs:
                                     st.info(f"Счета с пустым ПкЦБ отправлены с авто «{first_pkcb}»: "
                                             + ", ".join(empty_pkcb_docs))
