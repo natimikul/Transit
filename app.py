@@ -36,6 +36,22 @@ init_db()
 st.set_page_config(page_title="Система мониторинга", layout="wide")
 st.title("📦 Система мониторинга статуса счетов")
 
+# Названия кнопок переносятся на несколько строк (удобно в мобильной версии)
+st.markdown(
+    """
+    <style>
+      .stButton > button, [data-testid="stButton"] button,
+      .stDownloadButton > button, [data-testid="stDownloadButton"] button {
+          white-space: normal !important;
+          height: auto !important;
+          min-height: 2.4rem;
+          line-height: 1.25;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # --- 1. ЗАЩИТА ПАРОЛЕМ (БЕЗ ХАРДКОДА: хэши в st.secrets) ---
 # Пароли хранятся в st.secrets в виде bcrypt-хэшей. Сгенерировать хэш:
 #   python -c "import bcrypt; print(bcrypt.hashpw('вашпароль'.encode(), bcrypt.gensalt()).decode())"
@@ -129,6 +145,17 @@ with col_main:
         advert_input = st.text_input("Фильтр по Рекламе (первые цифры или фамилия):", "",
                                       key="advert_input",
                                       help="Например: 0830 или Свинцова — найдёт ваши счета из файла 1С")
+        _do_search = st.button("🔍 Поиск", key="btn_filters_search",
+                               help="Применить фильтры и показать найденные счета")
+        if _do_search:
+            if client_input or invoice_input or advert_input:
+                st.session_state["_applied_filters"] = {
+                    "client": client_input, "invoice": invoice_input, "advert": advert_input,
+                }
+                st.session_state["_filters_pending_clear"] = True
+            # Результат показывается сразу, без нажатия «Поиск по Клиенту»
+            st.session_state["active_report_mode"] = "Поиск по Клиенту"
+            st.rerun()
         # Фильтр срабатывает при нажатии Enter (или любого действия): применяется
         # и сохраняется, а окошки очищаются на следующем прогоне.
         if client_input or invoice_input or advert_input:
@@ -136,6 +163,8 @@ with col_main:
                 "client": client_input, "invoice": invoice_input, "advert": advert_input,
             }
             st.session_state["_filters_pending_clear"] = True
+            # Результат поиска открывается сразу (режим «Поиск по Клиенту» включается сам)
+            st.session_state["active_report_mode"] = "Поиск по Клиенту"
             st.rerun()
 
         # Отчёт собирается по СОХРАНЁННЫМ фильтрам, а не по очищенным окошкам
@@ -166,6 +195,31 @@ with col_main:
         date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
         selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
 
+def _apply_sel_all(editor_key, checkbox_key, row_count):
+    """Проставляет/снимает ВИДИМЫЕ галочки «✅ Отметка» во всех строках data_editor.
+
+    Вызывается как on_change у чекбокса «☑️ Отметить все счета этой таблицы»:
+    меняет состояние редактора ДО его отрисовки, поэтому пользователь видит
+    проставленные галочки и может снять любую из них вручную.
+    Прочие правки пользователя (даты, примечания и т.п.) сохраняются.
+    """
+    _value = bool(st.session_state.get(checkbox_key, False))
+    _state = st.session_state.get(editor_key)
+    if not isinstance(_state, dict):
+        _state = {"edited_rows": {}, "added_rows": [], "deleted_rows": []}
+    _edited = _state.get("edited_rows")
+    if not isinstance(_edited, dict):
+        _edited = {}
+    for _pos in range(row_count):
+        _row = dict(_edited.get(_pos, {}))
+        _row["✅ Отметка"] = _value
+        _edited[_pos] = _row
+    _state["edited_rows"] = _edited
+    _state.setdefault("added_rows", [])
+    _state.setdefault("deleted_rows", [])
+    st.session_state[editor_key] = _state
+
+
 # Клик по авто в мини-таблице = выгрузка Excel-накладной (детали на главной не выводим)
 def _car_docs_xlsx(_car_row, _car_id):
     """Excel-файл авто: краткие данные, документы и счета в авто."""
@@ -174,6 +228,23 @@ def _car_docs_xlsx(_car_row, _car_id):
     _doc_linked = get_car_invoice_doc_numbers(_car_id)
     _all_docs = sorted(set(_doc_pkcb + _doc_rkz + _doc_linked))
     _inv_car = get_invoices_by_auto_id(_car_id)
+    # В файле должны быть ВСЕ счета и ПкЦБ авто: добавляем счета, привязанные
+    # по ПкЦБ (даже если у них не заполнен auto_id), без дубликатов.
+    try:
+        _all_inv = get_all_invoices()
+        if not _all_inv.empty and _all_docs:
+            _pkcb_s = _all_inv["pkcb"].fillna("").astype(str).str.strip()
+            _mask = _pkcb_s.isin(_all_docs) & _all_inv["status"].isin(["В пути", "В сборке"])
+            _extra = _all_inv.loc[_mask]
+            if not _extra.empty:
+                _have_ids = set(_inv_car["id"].astype(int)) if (
+                    not _inv_car.empty and "id" in _inv_car.columns) else set()
+                _extra = _extra[~_extra["id"].astype(int).isin(_have_ids)]
+                if not _extra.empty:
+                    _inv_car = _extra if _inv_car.empty else pd.concat(
+                        [_inv_car, _extra], ignore_index=True)
+    except Exception:
+        pass
     _inv_cols = {
         'doc_number': '№ документа', 'client': 'Клиент', 'warehouse': 'Склад',
         'pkcb': 'ПкЦБ', 'status': 'Статус', 'plan_arrival': 'План прибытия',
@@ -284,10 +355,10 @@ with col_cars:
             _repl = " 📦" if int(_r.get("is_replenishment", 0) or 0) else ""
             _car_rows.append({
                 "Авто": f"#{int(_r['id'])}{_repl}",
-                "🌐": str(_r.get("country", "") or ""),
-                "📍 Локация": str(_r.get("location", "") or "") or "—",
-                "📅 Прибытие": str(_r.get("estimated_arrival", "") or "") or "—",
-                "📄 Доки": len(_docs),
+                "🌐": str(_r.get("country", "") or "") or "—",
+                "📍": str(_r.get("location", "") or "") or "—",
+                "📅": str(_r.get("estimated_arrival", "") or "") or "—",
+                "📄 ПкЦБ": ", ".join(_docs) or "—",
             })
         _car_disp = pd.DataFrame(_car_rows)
         # Версия ключа: после скачивания меняется — галочка сбрасывается
@@ -296,11 +367,11 @@ with col_cars:
             _car_disp, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row", key=_cars_key,
             column_config={
-                "Авто": st.column_config.TextColumn(help="Отметьте строку галочкой — скачается Excel с документами. 📦 = пополнение склада (ПкЦБ без счетов)"),
-                "🌐": st.column_config.TextColumn(width="small"),
-                "📍 Локация": st.column_config.TextColumn(width="medium"),
-                "📅 Прибытие": st.column_config.TextColumn(width="medium", help="Плановая дата прибытия в Алматы"),
-                "📄 Доки": st.column_config.NumberColumn(width="small", help="Кол-во документов ПкЦБ"),
+                "Авто": st.column_config.TextColumn(width="small", help="Отметьте строку галочкой — скачается Excel со всеми счетами и ПкЦБ. 📦 = пополнение склада (ПкЦБ без счетов)"),
+                "🌐": st.column_config.TextColumn(width="small", help="Страна"),
+                "📍": st.column_config.TextColumn(width="small", help="Текущая локация"),
+                "📅": st.column_config.TextColumn(width="small", help="Плановая дата прибытия в Алматы"),
+                "📄 ПкЦБ": st.column_config.TextColumn(width="medium", help="Документы ПкЦБ авто (полный список — в скачиваемом Excel)"),
             }
         )
 
@@ -917,6 +988,8 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all_created = st.checkbox(
                     "☑️ Отметить все счета этой таблицы", value=False,
                     key=f"sel_all_created_{key_suffix}",
+                    on_change=_apply_sel_all,
+                    args=(f"editor_created_{key_suffix}", f"sel_all_created_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_created.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Статус',
@@ -1057,8 +1130,11 @@ if current_mode == "Админ-панель" and is_admin:
                             elif not to_delete_ids:
                                 st.warning("Отметьте счета галочкой «✅ Отметка» "
                                            "(или включите «☑️ Отметить все счета этой таблицы»).")
-                            # Сбрасываем «Отметить все», чтобы не применить случайно к новым счетам
+                            # Сбрасываем «Отметить все» и видимые галочки, чтобы
+                            # не применить случайно к новым счетам
                             st.session_state[f"sel_all_created_{key_suffix}"] = False
+                            _apply_sel_all(f"editor_created_{key_suffix}",
+                                           f"sel_all_created_{key_suffix}", len(df))
                             st.rerun()
                             sync_db_to_github()
                         except Exception as e:
@@ -1118,6 +1194,8 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all_perm = st.checkbox(
                     "☑️ Отметить все счета этой таблицы", value=False,
                     key=f"sel_all_perm_{key_suffix}",
+                    on_change=_apply_sel_all,
+                    args=(f"editor_perm_{key_suffix}", f"sel_all_perm_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_perm.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад',
@@ -1154,7 +1232,9 @@ if current_mode == "Админ-панель" and is_admin:
 
                 selected = edited[edited['✅ Отметка'] == True]
                 if sel_all_perm:
-                    selected = edited
+                    # Видимые галочки уже проставлены: строки со снятой галочкой исключаем
+                    if (edited['✅ Отметка'] == False).sum() == 0:
+                        selected = edited
                 to_del = edited[edited['🗑️ Удалить'] == True]
 
                 # Кнопка применения массовых дат
@@ -1251,6 +1331,8 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all = st.checkbox(
                     "☑️ Отметить все счета этой таблицы",
                     value=False, key=f"sel_all_{key_suffix}",
+                    on_change=_apply_sel_all,
+                    args=(f"editor_asm_{key_suffix}", f"sel_all_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_asm.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
