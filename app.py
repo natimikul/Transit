@@ -253,8 +253,32 @@ def _car_docs_xlsx(_car_row, _car_id):
             ],
         })
         _info.to_excel(_writer, index=False, sheet_name="Авто")
-        _docs_sheet = (pd.DataFrame({"Документы ПкЦБ/РКЗ": _all_docs}) if _all_docs
-                       else pd.DataFrame({"Документы ПкЦБ/РКЗ": ["—"]}))
+        # Лист «Документы»: каждый документ авто + привязанные к нему СЧКЗ
+        _doc_rows = []
+        for _d in _all_docs:
+            if not _inv_car.empty:
+                _sub = _inv_car[
+                    (_inv_car["pkcb"].fillna("").astype(str).str.strip() == _d)
+                    | (_inv_car["doc_number"].fillna("").astype(str).str.strip() == _d)
+                ]
+            else:
+                _sub = pd.DataFrame()
+            _inv_list = sorted(set(_sub["doc_number"].dropna().astype(str).str.strip()) - {""}) \
+                if not _sub.empty else []
+            if _d in _doc_pkcb:
+                _dtype = "ПкЦБ"
+            elif _d in _doc_rkz:
+                _dtype = "РКЗ/СЧКЗ"
+            else:
+                _dtype = "привязан к авто"
+            _doc_rows.append({
+                "№ документа": _d,
+                "Тип": _dtype,
+                "СЧКЗ (№ счетов)": ", ".join(_inv_list) or "—",
+                "Кол-во счетов": len(_inv_list),
+            })
+        _docs_sheet = pd.DataFrame(_doc_rows) if _doc_rows else pd.DataFrame(
+            {"№ документа": ["—"], "Тип": ["—"], "СЧКЗ (№ счетов)": ["—"], "Кол-во счетов": [0]})
         _docs_sheet.to_excel(_writer, index=False, sheet_name="Документы")
         _sheet_inv.to_excel(_writer, index=False, sheet_name="Счёта в авто")
         for _sh in _writer.sheets.values():
@@ -355,16 +379,33 @@ with col_cars:
         # Нажатие по авто внутри таблицы (галочка строки) = скачивание XLS
         st.caption("☑ Нажмите галочку у авто — скачается Excel с документами:")
         if _car_event.selection.rows:
-            _sel_row = int(_car_event.selection.rows[0])
-            _r = _cars_df.iloc[_sel_row]
-            _cid = int(_r["id"])
-            _auto_download_xlsx(
-                _car_docs_xlsx(_r, _cid),
-                f"Авто_{_cid}_документы_{datetime.date.today()}.xlsx",
-            )
-            # Сброс галочки: новый ключ таблицы + мгновенный перегон
-            st.session_state["_cars_df_v"] = st.session_state.get("_cars_df_v", 0) + 1
-            st.rerun()
+            try:
+                _sel_row = int(_car_event.selection.rows[0])
+                _r = _cars_df.iloc[_sel_row]
+                _cid = int(_r["id"])
+                _dl_data = _car_docs_xlsx(_r, _cid)
+                _dl_name = f"Авто_{_cid}_документы_{datetime.date.today()}.xlsx"
+                st.session_state["_cars_dl"] = {"data": _dl_data, "name": _dl_name}
+                # Мгновенное скачивание через компонент. БЕЗ st.rerun() здесь:
+                # мгновенный перегон уничтожал компонент до запуска скачивания
+                # в браузере — файл не скачивался.
+                _auto_download_xlsx(_dl_data, _dl_name)
+                # Сброс галочки: новый ключ таблицы применится на следующем прогоне
+                st.session_state["_cars_df_v"] = st.session_state.get("_cars_df_v", 0) + 1
+            except Exception as _e:
+                st.error(f"Не удалось подготовить Excel: {_e}")
+
+        # Резервная кнопка скачивания: остается видимой, пока файл не скачан
+        _dl_pending = st.session_state.get("_cars_dl")
+        if _dl_pending:
+            if st.download_button(
+                f"⬇️ Скачать Excel {_dl_pending['name']}",
+                data=_dl_pending["data"],
+                file_name=_dl_pending["name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"car_dl_btn_{st.session_state.get('_cars_df_v', 0)}",
+            ):
+                st.session_state.pop("_cars_dl", None)
 
 db_all_invoices = get_all_invoices()
 total_rows = len(db_all_invoices)
