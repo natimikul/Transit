@@ -195,31 +195,6 @@ with col_main:
         date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
         selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
 
-def _apply_sel_all(editor_key, checkbox_key, row_count):
-    """Проставляет/снимает ВИДИМЫЕ галочки «✅ Отметка» во всех строках data_editor.
-
-    Вызывается как on_change у чекбокса «☑️ Отметить все счета этой таблицы»:
-    меняет состояние редактора ДО его отрисовки, поэтому пользователь видит
-    проставленные галочки и может снять любую из них вручную.
-    Прочие правки пользователя (даты, примечания и т.п.) сохраняются.
-    """
-    _value = bool(st.session_state.get(checkbox_key, False))
-    _state = st.session_state.get(editor_key)
-    if not isinstance(_state, dict):
-        _state = {"edited_rows": {}, "added_rows": [], "deleted_rows": []}
-    _edited = _state.get("edited_rows")
-    if not isinstance(_edited, dict):
-        _edited = {}
-    for _pos in range(row_count):
-        _row = dict(_edited.get(_pos, {}))
-        _row["✅ Отметка"] = _value
-        _edited[_pos] = _row
-    _state["edited_rows"] = _edited
-    _state.setdefault("added_rows", [])
-    _state.setdefault("deleted_rows", [])
-    st.session_state[editor_key] = _state
-
-
 # Клик по авто в мини-таблице = выгрузка Excel-накладной (детали на главной не выводим)
 def _car_docs_xlsx(_car_row, _car_id):
     """Excel-файл авто: краткие данные, документы и счета в авто."""
@@ -234,7 +209,9 @@ def _car_docs_xlsx(_car_row, _car_id):
         _all_inv = get_all_invoices()
         if not _all_inv.empty and _all_docs:
             _pkcb_s = _all_inv["pkcb"].fillna("").astype(str).str.strip()
-            _mask = _pkcb_s.isin(_all_docs) & _all_inv["status"].isin(["В пути", "В сборке"])
+            _doc_s = _all_inv["doc_number"].fillna("").astype(str).str.strip()
+            # Счета по ПкЦБ авто И по № СЧКЗ/РКЗ из документов авто
+            _mask = (_pkcb_s.isin(_all_docs) | _doc_s.isin(_all_docs)) & _all_inv["status"].isin(["В пути", "В сборке"])
             _extra = _all_inv.loc[_mask]
             if not _extra.empty:
                 _have_ids = set(_inv_car["id"].astype(int)) if (
@@ -358,7 +335,7 @@ with col_cars:
                 "🌐": str(_r.get("country", "") or "") or "—",
                 "📍": str(_r.get("location", "") or "") or "—",
                 "📅": str(_r.get("estimated_arrival", "") or "") or "—",
-                "📄 ПкЦБ": ", ".join(_docs) or "—",
+                "📄 Доки": len(_docs),
             })
         _car_disp = pd.DataFrame(_car_rows)
         # Версия ключа: после скачивания меняется — галочка сбрасывается
@@ -371,7 +348,7 @@ with col_cars:
                 "🌐": st.column_config.TextColumn(width="small", help="Страна"),
                 "📍": st.column_config.TextColumn(width="small", help="Текущая локация"),
                 "📅": st.column_config.TextColumn(width="small", help="Плановая дата прибытия в Алматы"),
-                "📄 ПкЦБ": st.column_config.TextColumn(width="medium", help="Документы ПкЦБ авто (полный список — в скачиваемом Excel)"),
+                "📄 Доки": st.column_config.NumberColumn(width="small", help="Кол-во документов ПкЦБ (полный список и все счета — в скачиваемом Excel)"),
             }
         )
 
@@ -988,15 +965,14 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all_created = st.checkbox(
                     "☑️ Отметить все счета этой таблицы", value=False,
                     key=f"sel_all_created_{key_suffix}",
-                    on_change=_apply_sel_all,
-                    args=(f"editor_created_{key_suffix}", f"sel_all_created_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_created.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Статус',
                              'Плановая дата отгрузки', 'Примечание', 'Реклама']:
                     if col in disp.columns:
                         disp[col] = disp[col].fillna('').astype(str)
-                disp.insert(0, '✅ Отметка', False)
+                # «Отметить все» → галочки видны во всех строках (можно снять любую)
+                disp.insert(0, '✅ Отметка', bool(sel_all_created))
                 disp.insert(1, '🗑️ Удалить', False)
                 available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                              'Статус', 'Разрешение РБ', 'Разрешение КЗ', 'Плановая дата отгрузки', 'Реклама', 'Примечание']
@@ -1130,11 +1106,8 @@ if current_mode == "Админ-панель" and is_admin:
                             elif not to_delete_ids:
                                 st.warning("Отметьте счета галочкой «✅ Отметка» "
                                            "(или включите «☑️ Отметить все счета этой таблицы»).")
-                            # Сбрасываем «Отметить все» и видимые галочки, чтобы
-                            # не применить случайно к новым счетам
+                            # Сбрасываем «Отметить все», чтобы не применить случайно к новым счетам
                             st.session_state[f"sel_all_created_{key_suffix}"] = False
-                            _apply_sel_all(f"editor_created_{key_suffix}",
-                                           f"sel_all_created_{key_suffix}", len(df))
                             st.rerun()
                             sync_db_to_github()
                         except Exception as e:
@@ -1194,15 +1167,13 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all_perm = st.checkbox(
                     "☑️ Отметить все счета этой таблицы", value=False,
                     key=f"sel_all_perm_{key_suffix}",
-                    on_change=_apply_sel_all,
-                    args=(f"editor_perm_{key_suffix}", f"sel_all_perm_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_perm.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад',
                              'Дата отправки на разрешение', 'Плановая дата отгрузки', 'Примечание', 'Реклама']:
                     if col in disp.columns:
                         disp[col] = disp[col].fillna('').astype(str)
-                disp.insert(0, '✅ Отметка', False)
+                disp.insert(0, '✅ Отметка', bool(sel_all_perm))
                 disp.insert(1, '🗑️ Удалить', False)
                 available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                               'Разрешение РБ', 'Разрешение КЗ', 'Дата отправки на разрешение',
@@ -1331,8 +1302,6 @@ if current_mode == "Админ-панель" and is_admin:
                 sel_all = st.checkbox(
                     "☑️ Отметить все счета этой таблицы",
                     value=False, key=f"sel_all_{key_suffix}",
-                    on_change=_apply_sel_all,
-                    args=(f"editor_asm_{key_suffix}", f"sel_all_{key_suffix}", len(df)),
                 )
                 disp = df.rename(columns={k: v for k, v in rename_map_asm.items() if k in df.columns})
                 for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
@@ -1340,7 +1309,7 @@ if current_mode == "Админ-панель" and is_admin:
                              'Плановая дата прибытия', 'Примечание', 'Реклама']:
                     if col in disp.columns:
                         disp[col] = disp[col].fillna('').astype(str)
-                disp.insert(0, '✅ Отметка', False)
+                disp.insert(0, '✅ Отметка', bool(sel_all))
                 disp.insert(1, '🗑️ Удалить', False)
                 available = ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад', 'ПкЦБ',
                               'Плановая дата отгрузки', 'Дата отгрузки (факт)', 'Транзит (дней)',
@@ -1377,6 +1346,8 @@ if current_mode == "Админ-панель" and is_admin:
                 to_del_ids = []
                 for pos in range(len(df)):
                     changes = edited_rows.get(pos, {})
+                    if changes.get('✅ Отметка') is False:
+                        continue  # снятая вручную галочка исключает счет даже при «Отметить все»
                     if sel_all or changes.get('✅ Отметка') is True:
                         selected_ids.append(row_to_id.get(pos))
                     if changes.get('🗑️ Удалить') is True:
