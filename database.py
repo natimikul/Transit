@@ -145,6 +145,15 @@ def init_db():
     # Пометка «пополнение склада»: ПкЦБ без счетов (самостоятельный документ)
     _add_column_if_missing(cursor, "auto_in_transit", "is_replenishment", "INTEGER DEFAULT 0")
 
+    # Таблица запомненных адресатов email (для выпадающего списка)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS email_recipients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        last_used DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     # Таблица счетов
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS invoices (
@@ -655,6 +664,43 @@ def get_invoices_for_email(status):
     )
     conn.close()
     return df
+
+
+# ========== ЗАПОМИНАНИЕ АДРЕСАТОВ EMAIL ==========
+
+def get_email_recipients():
+    """Сохраненные адреса email (по свежести использования)."""
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(
+        "SELECT email FROM email_recipients ORDER BY last_used DESC, id DESC",
+        conn,
+    )
+    conn.close()
+    return df["email"].dropna().tolist()
+
+
+def remember_email_recipients(recipient_string):
+    """Сохраняет использованные адреса (строка через запятую) для выпадающего списка."""
+    emails = [e.strip().lower() for e in str(recipient_string or "").split(",") if e.strip()]
+    if not emails:
+        return
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS email_recipients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        last_used DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    for e in emails:
+        cursor.execute("INSERT OR IGNORE INTO email_recipients (email) VALUES (?)", (e,))
+        cursor.execute(
+            "UPDATE email_recipients SET last_used = CURRENT_TIMESTAMP WHERE email = ?",
+            (e,),
+        )
+    conn.commit()
+    conn.close()
 
 
 # ========== АРХИВ СЧЕТОВ (invoices_archive) ==========

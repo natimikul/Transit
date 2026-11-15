@@ -24,6 +24,7 @@ from database import (
     link_auto_to_invoices_by_rkz, link_auto_to_invoices_by_pkcb,
     get_car_invoices_count, get_invoices_for_email, get_car_invoice_doc_numbers,
     get_arrived_cars, sync_db_to_github, check_github_token,
+    get_email_recipients, remember_email_recipients,
     get_archive_candidates, archive_old_invoices, restore_from_archive,
     delete_archive_rows, get_archive_invoices, get_archive_stats,
     get_invoices_by_auto_id
@@ -560,6 +561,12 @@ def send_today_report_email(recipient_emails):
     msg['To'] = recipient_emails
     msg['Subject'] = f"Мониторинг счетов — Сводка за {today_formatted}"
 
+    # Запоминаем адресатов для выпадающего списка в следующий раз
+    try:
+        remember_email_recipients(recipient_emails)
+    except Exception:
+        pass
+
     body = f"""Добрый день!
 
 Информируем Вас о смене статуса транзитных счетов на сегодня ({today_formatted}).
@@ -616,6 +623,12 @@ def send_status_email(status, recipient_emails, invoices_df=None):
             st.error("❌ Не задан список адресов для рассылки (st.secrets['email']['notify_emails']).")
             return False
 
+    # Запоминаем адресатов для выпадающего списка в следующий раз
+    try:
+        remember_email_recipients(recipient_emails)
+    except Exception:
+        pass
+
     # Счета: либо переданный список (одно авто), либо все счета со статусом
     if invoices_df is None:
         df = get_invoices_for_email(status)
@@ -636,6 +649,31 @@ def send_status_email(status, recipient_emails, invoices_df=None):
             f"| ПкЦБ: {r.get('pkcb', '-') or '-'}\n"
         )
 
+    # Данные ПкЦБ в авто: документы авто из auto_in_transit (по auto_id счетов)
+    pkcb_in_auto_text = ""
+    try:
+        _aid_series = df.get("auto_id")
+        if _aid_series is not None:
+            _auto_ids = sorted({int(a) for a in pd.to_numeric(_aid_series, errors="coerce").dropna().unique()})
+        else:
+            _auto_ids = []
+    except Exception:
+        _auto_ids = []
+    if _auto_ids:
+        try:
+            # get_all_cars_from_db() возвращает кортежи: (id, dispatch_date, country,
+            # location, doc_number, rkz_number, estimated_arrival, fact_arrival_date, is_arrived)
+            _cars_all = get_all_cars_from_db()
+            for _aid in _auto_ids:
+                _car_row_c = next((c for c in _cars_all if int(c[0]) == _aid), None)
+                if _car_row_c is None:
+                    continue
+                _docs_c = [d.strip() for d in str(_car_row_c[4] or "").split("\n") if d.strip()]
+                if _docs_c:
+                    pkcb_in_auto_text += "".join(f"  • {d}\n" for d in _docs_c)
+        except Exception:
+            pkcb_in_auto_text = ""
+
     msg = MIMEMultipart()
     msg['From'] = sender_email
     msg['To'] = recipient_emails
@@ -648,7 +686,12 @@ def send_status_email(status, recipient_emails, invoices_df=None):
 
 Список:
 {rows_text}
-
+"""
+    if pkcb_in_auto_text:
+        body += f"""
+ПкЦБ в авто:
+{pkcb_in_auto_text}"""
+    body += """
 С уважением,
 Система мониторинга транзита.
 """
@@ -1984,9 +2027,18 @@ if current_mode == "Админ-панель" and is_admin:
                     st.markdown(f"**📬 Email-рассылка по авто #{car_id}:**")
                     col_e1, col_e2, col_e3 = st.columns([3, 1, 1])
                     with col_e1:
-                        notify_eml = st.text_input("Email получателей (через запятую):", value="",
-                                                    key=f"alm_email_{car_id}",
-                                                    help="Если пусто — используется список из st.secrets")
+                        _saved_emails = get_email_recipients()
+                        _picked_emails = st.multiselect(
+                            "Адресаты (сохранённые):", _saved_emails,
+                            default=_saved_emails, key=f"alm_saved_{car_id}",
+                            help="Список запоминается после каждой отправки")
+                        _new_emails = st.text_input(
+                            "Или новые адреса через запятую:", value="",
+                            key=f"alm_email_{car_id}",
+                            help="Новые адреса запомнятся для следующего раза")
+                        notify_eml = ", ".join(
+                            list(_picked_emails)
+                            + [e.strip() for e in _new_emails.split(",") if e.strip()])
                     with col_e2:
                         if st.button("📬 Прибыл", key=f"btn_em_arr_{car_id}"):
                             # Файл идёт по данному авто: только счета и ПкЦБ
@@ -2826,7 +2878,15 @@ if st.session_state.current_report is not None:
 
 if st.session_state.get('show_email_modal', False):
     with st.expander("📬 Настройка отправки уведомлений", expanded=True):
-        emails = st.text_input("Введите адреса электронной почты через запятую:")
+        _saved_emails = get_email_recipients()
+        _picked_emails = st.multiselect(
+            "Сохранённые адресаты:", _saved_emails,
+            default=_saved_emails, key="modal_saved_emails",
+            help="Список запоминается после каждой отправки")
+        emails_new = st.text_input("Или новые адреса через запятую:", key="modal_new_emails")
+        emails = ", ".join(
+            list(_picked_emails)
+            + [e.strip() for e in emails_new.split(",") if e.strip()])
         if st.button("✉️ Отправить сводку за сегодня"):
             if not emails:
                 st.error("Укажите хотя бы один адрес!")
