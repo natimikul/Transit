@@ -332,6 +332,7 @@ def update_invoices_batch(df_updates):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     allowed_fields = [
+        'doc_number', 'invoice_date', 'client', 'warehouse',
         'pkcb', 'perm_rb', 'perm_kz', 'note',
         'plan_ship_date', 'fact_ship_date', 'transit_days',
         'plan_arrival', 'fact_arrival', 'status',

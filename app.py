@@ -1885,12 +1885,12 @@ if current_mode == "Админ-панель" and is_admin:
 
             car_map = {int(c['id']): c for _, c in arrived_cars.iterrows()} if not arrived_cars.empty else {}
 
-            def _render_almaty_car_table(car_id, car_row, df_car):
+            def _render_almaty_car_table(car_id, car_row, df_car, expanded=False):
                 flag = "🇷🇺" if "росс" in str(car_row.get('country', '')).lower() or "рф" in str(car_row.get('country', '')).lower() else "🇧🇾"
                 fact_arr = car_row.get('fact_arrival_date', '-') or '-'
                 header = f"{flag} Авто #{car_id} | Прибытие: {fact_arr} | {car_row.get('location', '-')} | {car_row.get('country', '-')}"
 
-                with st.expander(header, expanded=False):
+                with st.expander(header, expanded=expanded):
                     docs_list = [d.strip() for d in str(car_row.get('doc_number', '')).split("\n") if d.strip()]
                     rkz_list = [d.strip() for d in str(car_row.get('rkz_number', '')).split("\n") if d.strip()]
                     linked_doc_numbers = get_car_invoice_doc_numbers(car_id)
@@ -1964,9 +1964,9 @@ if current_mode == "Админ-панель" and is_admin:
                             else:
                                 for inv_id in to_del_ids:
                                     delete_invoice_by_id(inv_id)
-                                st.success(f"✅ Удалено: {len(to_del_ids)} счетов.")
-                                st.rerun()
+                                st.toast(f"✅ Удалено: {len(to_del_ids)} счетов.", icon="🗑️")
                                 sync_db_to_github()
+                                st.rerun()
                     with col_b2:
                         if st.button(f"📝 Применить дату расценки ({len(selected_ids)} шт.)", key=f"btn_rated_{car_id}"):
                             if not selected_ids:
@@ -2007,9 +2007,9 @@ if current_mode == "Админ-панель" and is_admin:
                             if rows:
                                 update_invoices_batch(pd.DataFrame(rows))
                             deleted_msg = f" Удалено: {len(to_del_ids)}." if to_del_ids else ""
-                            st.success(f"✅ Сохранено!{deleted_msg}")
-                            st.rerun()
+                            st.toast(f"✅ Сохранено!{deleted_msg}", icon="💾")
                             sync_db_to_github()
+                            st.rerun()
 
                     st.markdown("---")
                     col_d1, col_d2 = st.columns(2)
@@ -2055,24 +2055,77 @@ if current_mode == "Админ-панель" and is_admin:
                             if ok:
                                 st.success("✅ Письмо отправлено!")
 
+            # --- Сводная таблица авто (компактно): счета открываются только
+            # у выбранного авто — вместо длинного списка expander-ов ---
+            _sum_rows = []
+            _sum_meta = []  # (car_id, car_row, df_car) по строкам сводной таблицы
             for car_id, car_row in car_map.items():
                 df_car = pd.DataFrame(invoices_by_car.get(car_id, []))
                 if df_car.empty:
                     continue
-                _render_almaty_car_table(car_id, car_row, df_car)
-
+                _flag = "🇷🇺" if ("росс" in str(car_row.get('country', '')).lower()
+                                  or "рф" in str(car_row.get('country', '')).lower()) else "🇧🇾"
+                _ready = int((df_car["status"] == "Готов к отгрузке клиенту").sum()) \
+                    if "status" in df_car.columns else 0
+                _sum_rows.append({
+                    "Авто": f"{_flag} #{car_id}",
+                    "📅 Прибытие": str(car_row.get('fact_arrival_date', '') or '—'),
+                    "📍 Локация": str(car_row.get('location', '') or '—'),
+                    "🌐": str(car_row.get('country', '') or '—'),
+                    "📦 Счетов": len(df_car),
+                    "✅ Готов": _ready,
+                })
+                _sum_meta.append((car_id, car_row, df_car))
             other_car_ids = [aid for aid in invoices_by_car.keys() if aid not in car_map]
             for aid in other_car_ids:
                 df_car = pd.DataFrame(invoices_by_car.get(aid, []))
                 if df_car.empty:
                     continue
-                st.markdown(f"#### Авто #{aid} (данные авто удалены)")
-                _render_almaty_car_table(aid, {'country': '', 'fact_arrival_date': '', 'location': '', 'doc_number': '', 'rkz_number': ''}, df_car)
-
+                _ready = int((df_car["status"] == "Готов к отгрузке клиенту").sum()) \
+                    if "status" in df_car.columns else 0
+                _sum_rows.append({
+                    "Авто": f"❔ #{aid}",
+                    "📅 Прибытие": "—",
+                    "📍 Локация": "данные авто удалены",
+                    "🌐": "—",
+                    "📦 Счетов": len(df_car),
+                    "✅ Готов": _ready,
+                })
+                _sum_meta.append((aid, {'country': '', 'fact_arrival_date': '', 'location': '',
+                                        'doc_number': '', 'rkz_number': ''}, df_car))
             if not no_car_invoices.empty:
-                st.markdown(f"#### 📋 Счета без привязки к авто ({len(no_car_invoices)})")
-                df_no = no_car_invoices.reset_index(drop=True)
-                _render_almaty_car_table(0, {'country': '', 'fact_arrival_date': '', 'location': '', 'doc_number': '', 'rkz_number': ''}, df_no)
+                _ready = int((no_car_invoices["status"] == "Готов к отгрузке клиенту").sum()) \
+                    if "status" in no_car_invoices.columns else 0
+                _sum_rows.append({
+                    "Авто": "🚫 Без авто",
+                    "📅 Прибытие": "—",
+                    "📍 Локация": "—",
+                    "🌐": "—",
+                    "📦 Счетов": len(no_car_invoices),
+                    "✅ Готов": _ready,
+                })
+                _sum_meta.append((0, {'country': '', 'fact_arrival_date': '', 'location': '',
+                                      'doc_number': '', 'rkz_number': ''},
+                                  no_car_invoices.reset_index(drop=True)))
+
+            st.caption("☑ Кликните по строке авто — откроются его счета:")
+            _sum_event = st.dataframe(
+                pd.DataFrame(_sum_rows), hide_index=True, use_container_width=True,
+                on_select="rerun", selection_mode="single-row",
+                key="almaty_cars_summary",
+                column_config={
+                    "Авто": st.column_config.TextColumn(width="small"),
+                    "📅 Прибытие": st.column_config.TextColumn(width="small", help="Дата прибытия на склад Алматы"),
+                    "📍 Локация": st.column_config.TextColumn(width="small"),
+                    "🌐": st.column_config.TextColumn(width="small", help="Страна"),
+                    "📦 Счетов": st.column_config.NumberColumn(width="small"),
+                    "✅ Готов": st.column_config.NumberColumn(width="small", help="Статус «Готов к отгрузке клиенту»"),
+                },
+            )
+            if _sum_event.selection.rows:
+                _sel_car_id, _sel_car_row, _sel_df = _sum_meta[int(_sum_event.selection.rows[0])]
+                st.markdown("---")
+                _render_almaty_car_table(_sel_car_id, _sel_car_row, _sel_df, expanded=True)
 
             st.markdown("---")
             st.markdown("### 📥 Загрузка файла отгрузок из 1С")
@@ -2520,6 +2573,10 @@ if current_mode == "Админ-панель" and is_admin:
             available = ['🗑️ Удалить', 'ID'] + [c for c in editable_cols if c in disp.columns] + ['Источник']
             disp = disp[[c for c in available if c in disp.columns]]
 
+            # Ключ редактора зависит от поиска/фильтра: при их смене список строк
+            # меняется, а правки привязаны к ПОЗИЦИЯМ строк — старые правки
+            # «уехали» бы на другие счета (выглядело как «не срабатывает»).
+            _db_flt = f"{db_search.strip().lower()}|{','.join(sorted(db_status_filter))}"
             edited_db = st.data_editor(
                 disp,
                 column_config={
@@ -2551,7 +2608,7 @@ if current_mode == "Админ-панель" and is_admin:
                     'Источник': st.column_config.TextColumn(disabled=True),
                 },
                 use_container_width=True, hide_index=True,
-                num_rows="fixed", key="editor_db"
+                num_rows="fixed", key=f"editor_db_{_db_flt}"
             )
 
             col_db1, col_db2 = st.columns([1, 2])
@@ -2563,9 +2620,12 @@ if current_mode == "Админ-панель" and is_admin:
                     else:
                         for _, row in to_del.iterrows():
                             delete_invoice_by_id(int(row['ID']))
-                        st.success(f"✅ Удалено: {len(to_del)} счетов.")
-                        st.rerun()
+                        st.toast(f"✅ Удалено: {len(to_del)} счетов.", icon="🗑️")
+                        # Синхронизация ДО перегон: после st.rerun() скрипт
+                        # прерывается и sync не выполнялся — изменения терялись
+                        # при пересборке приложения.
                         sync_db_to_github()
+                        st.rerun()
             with col_db2:
                 if st.button("💾 Сохранить изменения", type="primary", key="btn_save_db"):
                     to_del = edited_db[edited_db['🗑️ Удалить'] == True]
@@ -2582,9 +2642,12 @@ if current_mode == "Админ-панель" and is_admin:
                         upd.drop(columns=['Разрешение КЗ'], inplace=True, errors='ignore')
                     update_invoices_batch(upd)
                     deleted_msg = f" Удалено: {len(to_del)}." if not to_del.empty else ""
-                    st.success(f"✅ Сохранено!{deleted_msg}")
-                    st.rerun()
+                    st.toast(f"✅ Сохранено!{deleted_msg}", icon="💾")
+                    # Синхронизация ДО перегон: после st.rerun() скрипт
+                    # прерывается и sync не выполнялся — изменения терялись
+                    # при пересборке приложения.
                     sync_db_to_github()
+                    st.rerun()
         else:
             st.info("📭 База данных пуста.")
 
