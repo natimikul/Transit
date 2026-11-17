@@ -420,6 +420,32 @@ else:
     start_filter, end_filter = default_start_dt, today_dt
 
 # --- 6. УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СБОРКИ И СТРОГОЙ ФИЛЬТРАЦИИ ---
+def _highlight_notes(df_disp, uuid, col="Примечание", color="#ffcccc"):
+    """Подсветка заполненных примечаний бледно-красным — для наглядности.
+
+    Возвращает pandas Styler (ячейки колонки col с непустым текстом —
+    с фоном color) или исходный DataFrame, если стиль построить нельзя.
+    uuid — стабильный идентификатор: без него data_editor со Styler
+    сбрасывает правки между перегонами.
+    """
+    if col not in df_disp.columns:
+        return df_disp
+    try:
+        sty = df_disp.style
+        sty.set_uuid(uuid)
+
+        def _hl(v):
+            return f"background-color: {color}" if isinstance(v, str) and v.strip() else ""
+
+        try:
+            sty = sty.map(_hl, subset=[col])       # pandas >= 2.1
+        except AttributeError:
+            sty = sty.applymap(_hl, subset=[col])  # pandas < 2.1
+        return sty
+    except Exception:
+        return df_disp
+
+
 def build_report(required_columns, status_list=None, source_sheet_list=None, warehouse_list=None,
                  filter_by_invoice=True, invoice_text="", client_text="",
                  start_dt=None, end_dt=None, sort_by=None, sort_ascending=True,
@@ -899,7 +925,7 @@ if current_mode == "Примечание" and is_admin:
     else:
         st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
         st.dataframe(
-            notes_show,
+            _highlight_notes(notes_show, "notes_view"),
             hide_index=True,
             use_container_width=True,
             column_config={
@@ -1127,7 +1153,7 @@ if current_mode == "Админ-панель" and is_admin:
                 disp = disp[[c for c in available if c in disp.columns]]
 
                 edited = st.data_editor(
-                    disp,
+                    _highlight_notes(disp, f"created_{key_suffix}"),
                     column_config={
                         '✅ Отметка': st.column_config.CheckboxColumn(),
                         '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
@@ -1256,8 +1282,11 @@ if current_mode == "Админ-панель" and is_admin:
                                            "(или включите «☑️ Отметить все счета этой таблицы»).")
                             # Сбрасываем «Отметить все», чтобы не применить случайно к новым счетам
                             st.session_state[f"sel_all_created_{key_suffix}"] = False
-                            st.rerun()
+                            # Синхронизация ДО перегона: после st.rerun() скрипт
+                            # прерывается и sync не выполнялся — изменения терялись
+                            # при пересборке контейнера.
                             sync_db_to_github()
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Ошибка при сохранении: {e}")
                 with col_c4:
@@ -1329,7 +1358,7 @@ if current_mode == "Админ-панель" and is_admin:
                 disp = disp[[c for c in available if c in disp.columns]]
 
                 edited = st.data_editor(
-                    disp,
+                    _highlight_notes(disp, f"perm_{key_suffix}"),
                     column_config={
                         '✅ Отметка': st.column_config.CheckboxColumn(),
                         '🗑️ Удалить': st.column_config.CheckboxColumn(help="Отметьте для удаления"),
@@ -1371,6 +1400,8 @@ if current_mode == "Админ-панель" and is_admin:
                                 update_data['plan_ship_date'] = ship_str
                             update_invoices_batch(pd.DataFrame([update_data]))
                         st.success(f"✅ Даты применены к {len(selected)} счетам.")
+                        # Синхронизация до перегона — иначе изменения теряются
+                        sync_db_to_github()
                         st.rerun()
 
                 col_p1, col_p2, col_p3 = st.columns([1, 2, 2])
@@ -1382,8 +1413,8 @@ if current_mode == "Админ-панель" and is_admin:
                             for _, row in to_del.iterrows():
                                 delete_invoice_by_id(int(row['ID']))
                             st.success(f"✅ Удалено: {len(to_del)} счетов.")
-                            st.rerun()
                             sync_db_to_github()
+                            st.rerun()
                 with col_p2:
                     # Сохраняем даты, проставленные в таблице + отправляем в сборку
                     if st.button(f"🔧 Отправить в сборку ({len(selected)} шт.)", type="primary", key=f"btn_perm_{key_suffix}"):
@@ -1399,8 +1430,8 @@ if current_mode == "Админ-панель" and is_admin:
                             upd['perm_kz'] = 0
                             update_invoices_batch(upd)
                             st.success(f"✅ {len(upd)} счетов отправлены в сборку (даты сохранены).")
-                            st.rerun()
                             sync_db_to_github()
+                            st.rerun()
                 with col_p3:
                     # Выгрузка видимой таблицы в Excel (без служебных галочек)
                     _export_admin_table_xlsx(edited, f"Разрешения_{group_name}", f"perm_{key_suffix}")
@@ -1508,8 +1539,8 @@ if current_mode == "Админ-панель" and is_admin:
                         for inv_id in to_del_ids:
                             delete_invoice_by_id(inv_id)
                         st.success(f"✅ Удалено: {len(to_del_ids)} счетов.")
-                        st.rerun()
                         sync_db_to_github()
+                        st.rerun()
 
                 if st.button(f"📝 Применить параметры ({len(selected_ids)} шт.)", key=f"btn_apply_{key_suffix}"):
                     if not selected_ids:
@@ -1532,8 +1563,8 @@ if current_mode == "Админ-панель" and is_admin:
                                     pass
                             update_invoices_batch(pd.DataFrame([update_data]))
                         st.success(f"✅ Параметры применены к {len(selected_ids)} счетам.")
-                        st.rerun()
                         sync_db_to_github()
+                        st.rerun()
 
                 # Выгрузка видимой таблицы в Excel (без служебных галочек)
                 col_ex1, col_ex2 = st.columns([1, 3])
@@ -1785,8 +1816,11 @@ if current_mode == "Админ-панель" and is_admin:
                                 if unassigned:
                                     st.warning("Не отправлены (ПкЦБ счёта не входит в список выше): "
                                                + ", ".join(unassigned))
-                            st.rerun()
+                            # Синхронизация ДО перегона: после st.rerun() скрипт
+                            # прерывается и sync не выполнялся — изменения терялись
+                            # при пересборке контейнера.
                             sync_db_to_github()
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Ошибка при отправке в путь: {e}")
                 st.markdown("---")
@@ -1836,8 +1870,8 @@ if current_mode == "Админ-панель" and is_admin:
                 if linked_rkz or linked_pkcb:
                     msg += f" Привязано счетов: {linked_rkz} (по РКЗ) + {linked_pkcb} (по ПкЦБ)."
                 st.success(msg)
-                st.rerun()
                 sync_db_to_github()
+                st.rerun()
 
         # Список авто в пути
         st.markdown("### 🚛 Активные авто")
@@ -1886,6 +1920,7 @@ if current_mode == "Админ-панель" and is_admin:
                         if linked_rkz or linked_pkcb:
                             msg += f" Доп. привязано счетов: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
                         st.success(msg)
+                        sync_db_to_github()
                         st.rerun()
 
                     st.markdown("---")
@@ -1915,11 +1950,12 @@ if current_mode == "Админ-панель" and is_admin:
                             affected = mark_car_arrived(car_id, fact_arr.strftime('%d.%m.%Y'))
                             st.success(f"✅ Авто #{car_id} прибыло на склад Алматы ({fact_arr.strftime('%d.%m.%Y')}). "
                                         f"Перенесено счетов в «Прибыл на склад Алматы»: {affected}.")
-                            st.rerun()
                             sync_db_to_github()
+                            st.rerun()
                     with col_arr3:
                         if st.button("🗑️ Удалить", key=f"btn_del_car_{car_id}"):
                             delete_car_by_id(car_id)
+                            sync_db_to_github()
                             st.rerun()
 
     # ---------------- ВКЛАДКА: АЛМАТЫ ----------------
@@ -2043,6 +2079,7 @@ if current_mode == "Админ-панель" and is_admin:
                                         for i in selected_ids]
                                 update_invoices_batch(pd.DataFrame(rows))
                                 st.success(f"✅ {len(rows)} счетов → «Готов к отгрузке клиенту» (расценен: {rated_str}).")
+                                sync_db_to_github()
                                 st.rerun()
                     with col_b3:
                         if st.button(f"💾 Сохранить ({len(df_car)} шт.)", type="primary", key=f"btn_save_alm_{car_id}"):
@@ -2111,6 +2148,9 @@ if current_mode == "Админ-панель" and is_admin:
                                 ok = send_status_email("Прибыл на склад Алматы", notify_eml, invoices_df=df_sub)
                             if ok:
                                 st.success("✅ Письмо отправлено!")
+                                # send_status_email запомнил адресатов в БД —
+                                # синхронизируем, чтобы не потерялись
+                                sync_db_to_github()
                     with col_e3:
                         if st.button("📬 Готов", key=f"btn_em_ready_{car_id}"):
                             df_sub = df_car[df_car['status'] == "Готов к отгрузке клиенту"]
@@ -2118,6 +2158,7 @@ if current_mode == "Админ-панель" and is_admin:
                                 ok = send_status_email("Готов к отгрузке клиенту", notify_eml, invoices_df=df_sub)
                             if ok:
                                 st.success("✅ Письмо отправлено!")
+                                sync_db_to_github()
 
             # --- Сводная таблица авто (компактно): счета открываются только
             # у выбранного авто — вместо длинного списка expander-ов ---
@@ -2584,6 +2625,7 @@ if current_mode == "Админ-панель" and is_admin:
                         'added_by': 'admin_manual',
                     })
                     st.success(f"✅ Счёт {new_doc.strip()} добавлен в БД.")
+                    sync_db_to_github()
                     st.rerun()
 
         st.markdown("---")
@@ -3022,5 +3064,7 @@ if st.session_state.get('show_email_modal', False):
                     success = send_today_report_email(recipient_emails=emails)
                     if success:
                         st.success(f"Сводка успешно отправлена на адреса: {emails}")
+                        # Адресаты запомнены в БД — синхронизируем, чтобы не потерялись
+                        sync_db_to_github()
                         st.session_state.show_email_modal = False
                         st.rerun()
