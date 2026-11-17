@@ -795,7 +795,7 @@ def show_archive_browser(allow_actions=False):
 st.subheader("📋 Формирование отчетов")
 
 if is_admin:
-    c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm, c8b_urgent, c8_ar, c9_admin = st.columns(10)
+    c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm, c8b_urgent, c8_ar, c9_admin, c10_note = st.columns(11)
 else:
     c1, c2, c3_asm, c4_ship, c5_arr, c6_auto, c7_alm, c8b_urgent, c8_ar = st.columns(9)
 
@@ -844,6 +844,10 @@ if is_admin:
         if st.button("⚙️ Админ-панель"):
             st.session_state.active_report_mode = "Админ-панель"
             st.rerun()
+    with c10_note:
+        if st.button("📝 Примечание"):
+            st.session_state.active_report_mode = "Примечание"
+            st.rerun()
 
 # --- 8. ВЫВОД РЕЗУЛЬТАТОВ ---
 cols_all = ['№ счета', 'Дата счета', 'Клиент', 'ПкЦБ', 'Реклама', 'Дата отгрузки (факт)', 'Плановая дата прибытия', 'Прибыл (факт)', 'Статус']
@@ -853,6 +857,66 @@ current_mode = st.session_state.get("active_report_mode", "Поиск по Кл�
 
 if current_mode == "Архив":
     show_archive_browser()
+    st.stop()
+
+# ==================== ПРИМЕЧАНИЯ (просмотр + выгрузка) ====================
+# Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
+# «Разрешения» и др.) — единый список с поиском, фильтром по статусу и выгрузкой.
+if current_mode == "Примечание" and is_admin:
+    st.subheader("📝 Примечания к счетам")
+    st.caption("Все счета с заполненным примечанием. Поиск, фильтр по статусу, выгрузка в Excel.")
+
+    notes_df = get_invoices_by_filters()
+    if "note" in notes_df.columns:
+        notes_df = notes_df[
+            notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
+        ].copy()
+    else:
+        notes_df = notes_df.iloc[0:0].copy()
+
+    n_search = st.text_input("🔍 № счета или клиент:", key="note_search")
+    if n_search.strip():
+        notes_df = notes_df[notes_df.apply(
+            lambda row: row.astype(str).str.contains(n_search.strip(), case=False, na=False).any(),
+            axis=1)]
+
+    n_status_opts = sorted(notes_df["status"].dropna().unique().tolist()) if "status" in notes_df.columns else []
+    n_status_sel = st.multiselect("Статус (пусто = все):", n_status_opts, key="note_status_sel")
+    if n_status_sel:
+        notes_df = notes_df[notes_df["status"].isin(n_status_sel)]
+
+    notes_show = notes_df.rename(columns={
+        'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
+        'client': 'Клиент', 'warehouse': 'Склад', 'status': 'Статус',
+        'note': 'Примечание', 'advert': 'Реклама',
+    })
+    note_cols = [c for c in ['ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
+                             'Статус', 'Примечание', 'Реклама'] if c in notes_show.columns]
+    notes_show = notes_show[note_cols]
+
+    if notes_show.empty:
+        st.info("📭 Нет счетов с заполненным примечанием.")
+    else:
+        st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
+        st.dataframe(
+            notes_show,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                'ID': st.column_config.NumberColumn(disabled=True),
+                'Примечание': st.column_config.TextColumn(width="large"),
+            },
+        )
+        notes_buf = BytesIO()
+        with pd.ExcelWriter(notes_buf, engine='xlsxwriter') as writer:
+            notes_show.to_excel(writer, index=False, sheet_name='Примечания')
+        st.download_button(
+            f"⬇️ Скачать Excel ({len(notes_show)} счетов)",
+            data=notes_buf.getvalue(),
+            file_name=f"Примечания_{datetime.date.today().strftime('%d.%m.%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="btn_notes_xlsx",
+        )
     st.stop()
 
 # ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
