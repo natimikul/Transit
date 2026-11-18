@@ -35,7 +35,8 @@ import pandas as pd
 import datetime
 from io import BytesIO
 from replenishment import show_replenishment_page
-from excel_import import parse_excel_1c, import_invoices_to_db, import_db_export, import_cars_export
+from excel_import import (parse_excel_1c, import_invoices_to_db, import_db_export,
+                          import_cars_export, classify_almaty_upload)
 from database import (
     init_db, save_car_to_db, get_all_cars_from_db,
     save_invoice_to_db, get_all_invoices, get_invoices_by_filters,
@@ -2351,7 +2352,8 @@ if current_mode == "Админ-панель" and is_admin:
             st.markdown("### 📥 Загрузка файла отгрузок из 1С")
             st.caption("Вариант 1 — полная таблица из 1С (счета, отсутствующие в файле → «Отказ»). "
                        "Вариант 2 — сокращённые файлы «отгружено клиенту» + «отказ» (только счета из файлов). "
-                       "Рейсы Внуково-КЗ / Брикета-КЗ / Дроздово-КЗ → «Отказ». "
+                       "Рейсы со словами Внуково / Брикета / Дроздово → статус остаётся «Готов к отгрузке клиенту». "
+                       "Строки 1С со статусом ≠ «Отгружен» игнорируются. "
                        "В предпросмотре можно снять галочку, удалить строку, сменить статус или исправить рейс.")
 
             load_mode = st.radio(
@@ -2428,96 +2430,83 @@ if current_mode == "Админ-панель" and is_admin:
 
                         # Сокращённый режим: файл, в имени которого есть «отказ», — источник отказа
                         short_mode = load_mode.startswith("Сокращённые")
-                        reject_file_docs = set()
-                        file_invoices = {}
+
+                        file_rows = []
                         for _label, _cdf in parsed_frames:
                             is_reject_file = short_mode and "отказ" in str(_label).lower()
                             for _, r in _cdf.iterrows():
                                 doc_num = str(r.get(1, "")).strip()
                                 if not doc_num:
                                     continue
-                                trip_name = str(r.get(3, "")).strip()
-                                trip_date = str(r.get(4, "")).strip()
-                                file_invoices[doc_num] = {"trip_name": trip_name, "trip_date": trip_date}
-                                if is_reject_file:
-                                    reject_file_docs.add(doc_num)
-
-                        # Рейсы отказных машин: сравнение без пробелов («Брикета- КЗ» = «брикета-кз»)
-                        reject_trip_keywords = ["внуково-кз", "брикета-кз", "дроздово-кз"]
-                        # В полном файле счета, отсутствующие в нём, считаются отказом;
-                        # в сокращённом режиме отказ — только счета из файла «отказ» и рейсы *-КЗ.
-                        auto_reject_missing = not short_mode
+                                file_rows.append({
+                                    "doc_number": doc_num,
+                                    "trip_name": str(r.get(3, "")).strip(),
+                                    "trip_date": str(r.get(4, "")).strip(),
+                                    "status_1c": str(r.get(5, "")).strip(),
+                                    "is_reject_file": bool(is_reject_file),
+                                })
 
                         almaty_ready = get_invoices_by_filters(status_list=["Прибыл на склад Алматы", "Готов к отгрузке клиенту"])
-
                         today_str = datetime.date.today().strftime('%d.%m.%Y')
 
-                        shipped_rows = []
-                        reject_rows = []
-                        for _, inv in almaty_ready.iterrows():
-                            doc_num = str(inv.get('doc_number', '') or '').strip()
-                            if not doc_num:
-                                continue
-                            if doc_num in reject_file_docs:
-                                reject_rows.append({
-                                    'id': int(inv['id']),
-                                    'status': 'Отказ',
-                                    'reject_date': today_str,
-                                })
-                                continue
-                            if doc_num in file_invoices:
-                                trip_name = file_invoices[doc_num]["trip_name"]
-                                trip_date = file_invoices[doc_num]["trip_date"]
-                                trip_norm = trip_name.lower().replace(" ", "").replace("\u00a0", "")
-                                is_reject_trip = any(k in trip_norm for k in reject_trip_keywords)
-                                if is_reject_trip:
-                                    reject_rows.append({
-                                        'id': int(inv['id']),
-                                        'status': 'Отказ',
-                                        'reject_date': today_str,
-                                    })
-                                    continue
-                                shipped_rows.append({
-                                    'id': int(inv['id']),
-                                    'status': 'Отгружено клиенту',
-                                    'final_trip_name': trip_name,
-                                    'final_trip_date': trip_date,
-                                    'delivery_date_to_client': today_str,
-                                })
-                            elif auto_reject_missing:
-                                reject_rows.append({
-                                    'id': int(inv['id']),
-                                    'status': 'Отказ',
-                                    'reject_date': today_str,
-                                })
+                        # Правила: рейс с Внуково/Брикета/Дроздово → статус не меняем,
+                        # счёта нет в файле → «Отказ», остальные → «Отгружено клиенту».
+                        cls = classify_almaty_upload(
+                            almaty_ready, pd.DataFrame(file_rows), short_mode=short_mode)
+                        ignored_rows = cls["ignored_rows"]
+                        ignored_status_docs = cls["ignored_only_docs"]
+                        stay_rows = cls["stay"]
+                        shipped_rows = [
+                            {**row, "status": "Отгружено клиенту",
+                             "final_trip_name": row["trip_name"],
+                             "final_trip_date": row["trip_date"],
+                             "delivery_date_to_client": today_str}
+                            for row in cls["shipped"]
+                        ]
+                        reject_rows = [
+                            {**row, "status": "Отказ", "reject_date": today_str}
+                            for row in cls["rejected"]
+                        ]
 
                         # --- ПРЕДПРОСМОТР: редактируемый, изменения применяются только после подтверждения ---
                         prev_rows = []
                         for row in shipped_rows:
-                            src = almaty_ready[almaty_ready['id'] == row['id']]
-                            doc_num = str(src.iloc[0]['doc_number']).strip() if not src.empty else ''
                             prev_rows.append({
                                 'ID': int(row['id']),
-                                '№ счета': doc_num,
+                                '№ счета': row['doc_number'],
                                 'Целевой статус': 'Отгружено клиенту',
                                 'Рейс': row['final_trip_name'],
                                 'Дата рейса': row['final_trip_date'],
                             })
                         for row in reject_rows:
-                            src = almaty_ready[almaty_ready['id'] == row['id']]
-                            doc_num = str(src.iloc[0]['doc_number']).strip() if not src.empty else ''
                             prev_rows.append({
                                 'ID': int(row['id']),
-                                '№ счета': doc_num,
+                                '№ счета': row['doc_number'],
                                 'Целевой статус': 'Отказ',
                                 'Рейс': '',
                                 'Дата рейса': '',
+                            })
+                        for row in stay_rows:
+                            prev_rows.append({
+                                'ID': int(row['id']),
+                                '№ счета': row['doc_number'],
+                                'Целевой статус': 'Готов к отгрузке клиенту',
+                                'Рейс': row['trip_name'],
+                                'Дата рейса': row['trip_date'],
                             })
                         df_prev = pd.DataFrame(
                             prev_rows,
                             columns=['ID', '№ счета', 'Целевой статус', 'Рейс', 'Дата рейса'],
                         )
                         df_prev.insert(0, '✅ Применить', True)
+
+                        if ignored_rows:
+                            st.caption(f"ℹ️ Строк 1С со статусом ≠ «Отгружен» проигнорировано: {ignored_rows} "
+                                       f"(счетов без строки «Отгружен»: {len(ignored_status_docs)}) — "
+                                       f"по ним статус не меняется.")
+                        if stay_rows:
+                            st.caption(f"🏢 Рейсы со словами Внуково / Брикета / Дроздово: {len(stay_rows)} счёт(ов) "
+                                       f"остаются в статусе «Готов к отгрузке клиенту» (без изменений).")
 
                         st.markdown("##### 👀 Предпросмотр (изменения ещё НЕ применены)")
                         st.caption("Снимите галочку или удалите строку — счёт останется без изменений. "
@@ -2531,21 +2520,23 @@ if current_mode == "Админ-панель" and is_admin:
                                 'ID': st.column_config.NumberColumn('ID', disabled=True),
                                 '№ счета': st.column_config.TextColumn('№ счета', disabled=True),
                                 'Целевой статус': st.column_config.SelectboxColumn(
-                                    'Целевой статус', options=['Отгружено клиенту', 'Отказ']),
+                                    'Целевой статус',
+                                    options=['Отгружено клиенту', 'Отказ', 'Готов к отгрузке клиенту']),
                                 'Рейс': st.column_config.TextColumn('Рейс'),
                                 'Дата рейса': st.column_config.TextColumn('Дата рейса'),
                             },
                             key="ed_almaty_preview",
                         )
 
-                        ship_cnt = rej_cnt = 0
+                        ship_cnt = rej_cnt = stay_cnt = 0
                         if not edited_prev.empty:
                             _mask = edited_prev['✅ Применить'].fillna(False).astype(bool)
                             ship_cnt = int((_mask & (edited_prev['Целевой статус'] == 'Отгружено клиенту')).sum())
                             rej_cnt = int((_mask & (edited_prev['Целевой статус'] == 'Отказ')).sum())
+                            stay_cnt = int((_mask & (edited_prev['Целевой статус'] == 'Готов к отгрузке клиенту')).sum())
 
                         if st.button(
-                            f"✅ Применить ({ship_cnt} отгружено, {rej_cnt} отказ)",
+                            f"✅ Применить ({ship_cnt} отгружено, {rej_cnt} отказ, {stay_cnt} без изменений)",
                             type="primary", key="btn_apply_almaty_ship",
                         ):
                             upd_ship = []
@@ -2574,6 +2565,7 @@ if current_mode == "Админ-панель" and is_admin:
                                             'status': 'Отказ',
                                             'reject_date': today_str,
                                         })
+                                    # 'Готов к отгрузке клиенту' — оставляем без изменений
                             if upd_ship:
                                 update_invoices_batch(pd.DataFrame(upd_ship))
                             if upd_rej:
@@ -2584,6 +2576,8 @@ if current_mode == "Админ-панель" and is_admin:
                                 msg_parts.append(f"{len(upd_ship)} → «Отгружено клиенту»")
                             if upd_rej:
                                 msg_parts.append(f"{len(upd_rej)} → «Отказ»")
+                            if stay_cnt:
+                                msg_parts.append(f"{stay_cnt} остаются «Готов к отгрузке клиенту»")
                             if msg_parts:
                                 st.success(f"✅ Обработано: {', '.join(msg_parts)}.")
                             else:

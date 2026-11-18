@@ -562,3 +562,111 @@ def import_cars_export(uploaded_file):
     conn.commit()
     conn.close()
     return saved_count, updated_count, skipped_count
+
+
+# ==================== ОБРАБОТКА ФАЙЛА ОТГРУЗОК (вкладка «Прибыл на склад Алматы») ====================
+
+# Если в рейсе есть одно из этих слов, товар ещё на складе (Москва), а не у клиента.
+ALMATY_WAREHOUSE_TRIP_WORDS = ("внуково", "брикета", "дроздово")
+
+
+def _clean_cell(v):
+    """None / NaN → '', иначе строка без крайних пробелов."""
+    if v is None:
+        return ""
+    try:
+        if pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip()
+
+
+def classify_almaty_upload(almaty_df, file_df, short_mode=False):
+    """Классифицирует счета склада Алматы по файлу отгрузок из 1С.
+
+    Правила:
+      * строки файла со статусом 1С ≠ «Отгружен» («Не обрабатывать»,
+        «Выгружен в WMS» и т.п.) игнорируются — это ещё не отгрузка;
+      * счёт, у которого не осталось ни одной строки «Отгружен», считается
+        отсутствующим в файле (в полном режиме → «Отказ»);
+      * если рейс содержит Внуково / Брикета / Дроздово, товар ещё на складе:
+        статус остаётся «Готов к отгрузке клиенту» (дата рейса не важна);
+      * остальные счета, найденные в файле → «Отгружено клиенту».
+
+    almaty_df : DataFrame со счетами в статусах «Прибыл на склад Алматы» /
+        «Готов к отгрузке клиенту» (нужны колонки id, doc_number).
+    file_df   : DataFrame со строками файла (колонки doc_number, trip_name,
+        trip_date, status_1c, is_reject_file). Может быть пустым/None.
+    short_mode: сокращённый режим («отгружено» + «отказ»): статусы строк
+        не фильтруются, отказ берётся из файла «отказ».
+
+    Возвращает dict:
+        shipped           — [{'id', 'doc_number', 'trip_name', 'trip_date'}]
+        rejected          — [{'id', 'doc_number'}]
+        stay              — [{'id', 'doc_number', 'trip_name', 'trip_date'}]
+        ignored_rows      — сколько строк проигнорировано по статусу 1С
+        ignored_only_docs — счета, у которых все строки проигнорированы
+    """
+    file_invoices = {}    # doc_number -> {'trip_name', 'trip_date'} — строки «Отгружен»
+    ignored_invoices = {}  # doc_number -> {'trip_name', 'trip_date'} — строки с другим статусом
+    reject_docs = set()
+    ignored_rows = 0
+
+    if file_df is not None and not file_df.empty:
+        for _, r in file_df.iterrows():
+            doc = _clean_cell(r.get("doc_number"))
+            if not doc:
+                continue
+            if bool(r.get("is_reject_file", False)):
+                reject_docs.add(doc)
+                continue
+            status_1c = _clean_cell(r.get("status_1c")).lower()
+            if not short_mode and status_1c != "отгружен":
+                ignored_rows += 1
+                ignored_invoices.setdefault(doc, {
+                    "trip_name": _clean_cell(r.get("trip_name")),
+                    "trip_date": _clean_cell(r.get("trip_date")),
+                })
+                continue
+            file_invoices[doc] = {
+                "trip_name": _clean_cell(r.get("trip_name")),
+                "trip_date": _clean_cell(r.get("trip_date")),
+            }
+
+    ignored_only_docs = sorted(set(ignored_invoices) - set(file_invoices))
+
+    shipped, rejected, stay = [], [], []
+    if almaty_df is not None and not almaty_df.empty:
+        for _, inv in almaty_df.iterrows():
+            doc = _clean_cell(inv.get("doc_number"))
+            if not doc:
+                continue
+            base = {"id": int(inv["id"]), "doc_number": doc}
+            if doc in reject_docs:
+                rejected.append(base)
+                continue
+            if doc in file_invoices:
+                trip_name = file_invoices[doc]["trip_name"]
+                trip_date = file_invoices[doc]["trip_date"]
+                trip_norm = trip_name.lower().replace(" ", "").replace("\u00a0", "")
+                if any(w in trip_norm for w in ALMATY_WAREHOUSE_TRIP_WORDS):
+                    stay.append({**base, "trip_name": trip_name, "trip_date": trip_date})
+                else:
+                    shipped.append({**base, "trip_name": trip_name, "trip_date": trip_date})
+            elif doc in ignored_invoices:
+                # Строка в файле есть, но статус 1С ≠ «Отгружен» — статус не меняем
+                stay.append({**base,
+                             "trip_name": ignored_invoices[doc]["trip_name"],
+                             "trip_date": ignored_invoices[doc]["trip_date"]})
+            elif not short_mode:
+                # В полном файле счёта нет совсем → клиент отказался
+                rejected.append(base)
+
+    return {
+        "shipped": shipped,
+        "rejected": rejected,
+        "stay": stay,
+        "ignored_rows": ignored_rows,
+        "ignored_only_docs": ignored_only_docs,
+    }
