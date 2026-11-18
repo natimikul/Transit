@@ -885,12 +885,13 @@ if current_mode == "Архив":
     show_archive_browser()
     st.stop()
 
-# ==================== ПРИМЕЧАНИЯ (просмотр + выгрузка) ====================
+# ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
 # Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
-# «Разрешения» и др.) — единый список с поиском, фильтром по статусу и выгрузкой.
+# «Разрешения» и др.) — единый список с поиском, фильтром по статусу,
+# редактированием inline и выгрузкой в Excel.
 if current_mode == "Примечание" and is_admin:
     st.subheader("📝 Примечания к счетам")
-    st.caption("Все счета с заполненным примечанием. Поиск, фильтр по статусу, выгрузка в Excel.")
+    st.caption("Все счета с заполненным примечанием. Можно редактировать примечания inline, фильтровать и выгружать в Excel.")
 
     notes_df = get_invoices_by_filters()
     if "note" in notes_df.columns:
@@ -924,15 +925,41 @@ if current_mode == "Примечание" and is_admin:
         st.info("📭 Нет счетов с заполненным примечанием.")
     else:
         st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
-        st.dataframe(
-            _highlight_notes(notes_show, "notes_view"),
+        # Используем data_editor вместо dataframe — можно редактировать ячейки inline
+        edited_notes = st.data_editor(
+            _highlight_notes(notes_show, "notes_editor"),
             hide_index=True,
             use_container_width=True,
             column_config={
                 'ID': st.column_config.NumberColumn(disabled=True),
                 'Примечание': st.column_config.TextColumn(width="large"),
             },
+            key="notes_editor_df",
         )
+        # Сравниваем старое и новое значения, чтобы сохранить только изменения
+        if st.button("💾 Сохранить примечания", type="primary"):
+            changes_made = False
+            for idx, row in edited_notes.iterrows():
+                orig_idx = notes_show.index.get_loc(idx) if idx in notes_show.index else -1
+                if orig_idx >= 0:
+                    new_note = str(row.get('Примечание', '') or '')
+                    old_note = str(notes_show.iloc[orig_idx].get('Примечание', '') or '')
+                    if new_note != old_note:
+                        doc_num = str(notes_show.iloc[orig_idx].get('№ счета', ''))
+                        # Обновляем note в БД по doc_number
+                        import sqlite3
+                        from database import DB_NAME
+                        conn = sqlite3.connect(DB_NAME)
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE invoices SET note = ? WHERE doc_number = ?", (new_note, doc_num))
+                        conn.commit()
+                        conn.close()
+                        changes_made = True
+            if changes_made:
+                st.toast("✅ Примечания сохранены в БД.", icon="💾")
+            else:
+                st.info("ℹ️ Изменений не было.")
+            st.rerun()
         notes_buf = BytesIO()
         with pd.ExcelWriter(notes_buf, engine='xlsxwriter') as writer:
             notes_show.to_excel(writer, index=False, sheet_name='Примечания')
