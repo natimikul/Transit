@@ -144,6 +144,8 @@ def init_db():
     _add_column_if_missing(cursor, "auto_in_transit", "is_arrived", "INTEGER DEFAULT 0")
     # Пометка «пополнение склада»: ПкЦБ без счетов (самостоятельный документ)
     _add_column_if_missing(cursor, "auto_in_transit", "is_replenishment", "INTEGER DEFAULT 0")
+    # Переданный товар/документы для клиентов: JSON [{"item": "...", "email": "..."}]
+    _add_column_if_missing(cursor, "auto_in_transit", "extra_items", "TEXT")
 
     # Таблица запомненных адресатов email (для выпадающего списка)
     cursor.execute('''
@@ -561,6 +563,52 @@ def update_car(car_id, dispatch_date, country, location, doc_number,
           estimated_arrival, car_id))
     conn.commit()
     conn.close()
+
+
+def get_car_extra_items(car_id):
+    """Переданный товар/документы авто: список {'item': ..., 'email': ...}."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT extra_items FROM auto_in_transit WHERE id = ?", (car_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return []
+    try:
+        data = json.loads(row[0])
+    except (TypeError, ValueError):
+        return []
+    items = []
+    if isinstance(data, list):
+        for it in data:
+            if not isinstance(it, dict):
+                continue
+            item = str(it.get("item") or "").strip()
+            email = str(it.get("email") or "").strip()
+            if item or email:
+                items.append({"item": item, "email": email})
+    return items
+
+
+def save_car_extra_items(car_id, items):
+    """Сохраняет переданный товар/документы (список {'item', 'email'}) в JSON."""
+    cleaned = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        item = str(it.get("item") or "").strip()
+        email = str(it.get("email") or "").strip()
+        if item or email:
+            cleaned.append({"item": item, "email": email})
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE auto_in_transit SET extra_items = ? WHERE id = ?",
+        (json.dumps(cleaned, ensure_ascii=False) if cleaned else None, car_id),
+    )
+    conn.commit()
+    conn.close()
+    return cleaned
 
 
 # ========== СВЯЗЬ АВТО СО СЧЕТАМИ ПО № РКЗ ==========

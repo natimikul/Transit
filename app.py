@@ -47,6 +47,7 @@ from database import (
     get_car_invoices_count, get_invoices_for_email, get_car_invoice_doc_numbers,
     get_arrived_cars, sync_db_to_github, check_github_token,
     get_email_recipients, remember_email_recipients,
+    get_car_extra_items, save_car_extra_items,
     get_archive_candidates, archive_old_invoices, restore_from_archive,
     delete_archive_rows, get_archive_invoices, get_archive_stats,
     get_invoices_by_auto_id
@@ -777,6 +778,107 @@ def send_status_email(status, recipient_emails, invoices_df=None):
     except Exception as e:
         st.error(f"Не удалось отправить письмо. Ошибка: {e}")
         return False
+
+
+# --- ИНФОРМАЦИОННОЕ ПИСЬМО: ПЕРЕДАННЫЙ ТОВАР / ДОКУМЕНТЫ ---
+
+def _is_valid_email(value):
+    """Простая проверка адреса: есть текст до @, домен и точка в домене."""
+    s = str(value or "").strip()
+    if s.count("@") != 1:
+        return False
+    local, domain = s.split("@")
+    return bool(local) and "." in domain and not domain.startswith(".") \
+        and not domain.endswith(".") and " " not in s
+
+
+def group_extra_items_by_email(items):
+    """Группирует пункты переданного товара по адресатам.
+
+    items — список {'item': ..., 'email': ...} (как в таблице авто).
+    Возвращает (grouped, invalid):
+      grouped — {email_lower: {'email': исходный, 'items': [пункты]}}
+      invalid — строки без пункта или с пустым/некорректным e-mail.
+    Один адресат получает одно письмо со всеми своими пунктами.
+    """
+    grouped = {}
+    invalid = []
+    for it in items or []:
+        item = str(it.get("item") or "").strip() if isinstance(it, dict) else ""
+        email = str(it.get("email") or "").strip() if isinstance(it, dict) else ""
+        if not item or not _is_valid_email(email):
+            invalid.append({"item": item, "email": email})
+            continue
+        key = email.lower()
+        if key not in grouped:
+            grouped[key] = {"email": email, "items": []}
+        grouped[key]["items"].append(item)
+    return grouped, invalid
+
+
+def build_extra_items_email_body(items, date_str=None):
+    """Текст письма о прибытии авто с переданными пунктами."""
+    date_str = date_str or datetime.date.today().strftime('%d.%m.%Y')
+    lines = "\n".join(f"  • {i}" for i in items)
+    return (f"Добрый день!\n\n"
+            f"Информируем о прибытии авто сегодня ({date_str}).\n"
+            f"Для Вас дополнительно передали:\n{lines}\n")
+
+
+def send_extra_items_email(car_id, items):
+    """Отправляет информационные письма о прибытии авто.
+
+    Одно письмо на каждый уникальный адрес со списком его пунктов.
+    Возвращает {'sent': int, 'failed': [адреса], 'invalid': [строки]}.
+    """
+    result = {"sent": 0, "failed": [], "invalid": []}
+    grouped, invalid = group_extra_items_by_email(items)
+    result["invalid"] = invalid
+    if not grouped:
+        return result
+
+    try:
+        sender_email = st.secrets["email"]["sender_email"]
+        sender_password = st.secrets["email"]["sender_password"]
+    except (KeyError, FileNotFoundError):
+        st.error("❌ Не настроены параметры почты в st.secrets (раздел [email]).")
+        result["failed"] = [d["email"] for d in grouped.values()]
+        return result
+
+    date_str = datetime.date.today().strftime('%d.%m.%Y')
+
+    try:
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(sender_email, sender_password)
+    except Exception as e:
+        st.error(f"Не удалось подключиться к почтовому серверу. Ошибка: {e}")
+        result["failed"] = [d["email"] for d in grouped.values()]
+        return result
+
+    for data in grouped.values():
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = data["email"]
+        msg['Subject'] = f"Транзит — прибытие авто #{car_id} — {date_str}"
+        msg.attach(MIMEText(build_extra_items_email_body(data["items"], date_str),
+                           'plain', 'utf-8'))
+        try:
+            server.sendmail(sender_email, [data["email"]], msg.as_string())
+            result["sent"] += 1
+        except Exception:
+            result["failed"].append(data["email"])
+
+    try:
+        server.quit()
+    except Exception:
+        pass
+
+    try:
+        remember_email_recipients(", ".join(d["email"] for d in grouped.values()))
+    except Exception:
+        pass
+
+    return result
 
 
 # --- ФУНКЦИЯ ПРОСМОТРА АРХИВА (ДОСТУПНА ВСЕМ ПОЛЬЗОВАТЕЛЯМ) ---
@@ -2053,6 +2155,65 @@ if current_mode == "Админ-панель" and is_admin:
                                    f"(ручных: {len(rkz_list)}, из счетов: {len(auto_rkz_list)}):")
                         if combined_rkz:
                             st.code("\n".join(combined_rkz), language="")
+
+                    st.markdown("---")
+
+                    # ---- Переданный товар / документы для клиентов ----
+                    st.markdown("**📦 Переданный товар / документы:**")
+                    st.caption("Одна строка = пункт + e-mail. Пунктов и адресатов может быть несколько. "
+                               "Кнопка «Отправить письмо» вышлет каждому адресату отдельное письмо "
+                               "со всеми его пунктами.")
+
+                    _extra_items = get_car_extra_items(car_id)
+                    _extra_df = pd.DataFrame(
+                        [{"Пункт": _it["item"], "Email": _it["email"]} for _it in _extra_items]
+                        or [{"Пункт": "", "Email": ""}]
+                    )
+                    _edited_extra = st.data_editor(
+                        _extra_df, hide_index=True, num_rows="dynamic",
+                        use_container_width=True,
+                        column_config={
+                            "Пункт": st.column_config.TextColumn(
+                                "Пункт", width="large",
+                                help="Например: коробка для ..., ПкЦБ крюки"),
+                            "Email": st.column_config.TextColumn(
+                                "Email", help="Адрес получателя (можно ввести вручную)"),
+                        },
+                        key=f"extra_items_editor_{car_id}",
+                    )
+
+                    _items_to_save = []
+                    if isinstance(_edited_extra, pd.DataFrame) and not _edited_extra.empty:
+                        for _, _er in _edited_extra.iterrows():
+                            _item = str(_er.get("Пункт") or "").strip()
+                            _email = str(_er.get("Email") or "").strip()
+                            if _item or _email:
+                                _items_to_save.append({"item": _item, "email": _email})
+
+                    _col_x1, _col_x2 = st.columns(2)
+                    with _col_x1:
+                        if st.button("💾 Сохранить список", key=f"btn_save_extra_{car_id}"):
+                            save_car_extra_items(car_id, _items_to_save)
+                            st.success("✅ Список переданного сохранён.")
+                            sync_db_to_github()
+                            st.rerun()
+                    with _col_x2:
+                        if st.button("📧 Отправить письмо", key=f"btn_send_extra_{car_id}",
+                                     type="primary"):
+                            save_car_extra_items(car_id, _items_to_save)
+                            _res = send_extra_items_email(car_id, _items_to_save)
+                            if _res["sent"]:
+                                st.success(f"✅ Отправлено писем: {_res['sent']}.")
+                            if _res["failed"]:
+                                st.error("❌ Не удалось отправить: " + ", ".join(_res["failed"]))
+                            if _res["invalid"]:
+                                _bad = "; ".join(
+                                    f"{b['item'] or '—'} → {b['email'] or '—'}"
+                                    for b in _res["invalid"])
+                                st.warning("⚠️ Пропущены строки без пункта или с некорректным "
+                                           f"e-mail: {_bad}")
+                            if _res["sent"] or _res["failed"]:
+                                sync_db_to_github()
 
                     st.markdown("---")
 
