@@ -792,10 +792,24 @@ def _is_valid_email(value):
         and not domain.endswith(".") and " " not in s
 
 
+def _split_emails(value):
+    """Разбивает строку с адресами: «a@b.ru, c@d.ru; e@f.ru» → список адресов."""
+    raw = str(value or "").replace(";", ",").replace("\n", ",")
+    result = []
+    for chunk in raw.split(","):
+        for part in chunk.split():
+            part = part.strip()
+            if part:
+                result.append(part)
+    return result
+
+
 def group_extra_items_by_email(items):
     """Группирует пункты переданного товара по адресатам.
 
     items — список {'item': ..., 'email': ...} (как в таблице авто).
+    В поле email можно указать несколько адресов через запятую, точку
+    с запятой или пробел — каждый получит письмо со своими пунктами.
     Возвращает (grouped, invalid):
       grouped — {email_lower: {'email': исходный, 'items': [пункты]}}
       invalid — строки без пункта или с пустым/некорректным e-mail.
@@ -805,14 +819,20 @@ def group_extra_items_by_email(items):
     invalid = []
     for it in items or []:
         item = str(it.get("item") or "").strip() if isinstance(it, dict) else ""
-        email = str(it.get("email") or "").strip() if isinstance(it, dict) else ""
-        if not item or not _is_valid_email(email):
-            invalid.append({"item": item, "email": email})
+        raw_emails = str(it.get("email") or "").strip() if isinstance(it, dict) else ""
+        emails = _split_emails(raw_emails)
+        if not item or not emails:
+            invalid.append({"item": item, "email": raw_emails})
             continue
-        key = email.lower()
-        if key not in grouped:
-            grouped[key] = {"email": email, "items": []}
-        grouped[key]["items"].append(item)
+        for email in emails:
+            if not _is_valid_email(email):
+                invalid.append({"item": item, "email": email})
+                continue
+            key = email.lower()
+            if key not in grouped:
+                grouped[key] = {"email": email, "items": []}
+            if item not in grouped[key]["items"]:
+                grouped[key]["items"].append(item)
     return grouped, invalid
 
 
@@ -2160,9 +2180,10 @@ if current_mode == "Админ-панель" and is_admin:
 
                     # ---- Переданный товар / документы для клиентов ----
                     st.markdown("**📦 Переданный товар / документы:**")
-                    st.caption("Одна строка = пункт + e-mail. Пунктов и адресатов может быть несколько. "
-                               "Кнопка «Отправить письмо» вышлет каждому адресату отдельное письмо "
-                               "со всеми его пунктами.")
+                    st.caption("Одна строка = пункт + e-mail. Пунктов может быть несколько. "
+                               "В поле Email можно указать несколько адресов через запятую — "
+                               "каждый получит письмо со всеми своими пунктами. "
+                               "Кнопка «Отправить письмо» вышлет письма всем адресатам.")
 
                     _extra_items = get_car_extra_items(car_id)
                     _extra_df = pd.DataFrame(
@@ -2177,7 +2198,7 @@ if current_mode == "Админ-панель" and is_admin:
                                 "Пункт", width="large",
                                 help="Например: коробка для ..., ПкЦБ крюки"),
                             "Email": st.column_config.TextColumn(
-                                "Email", help="Адрес получателя (можно ввести вручную)"),
+                                "Email", help="Один или несколько адресов через запятую"),
                         },
                         key=f"extra_items_editor_{car_id}",
                     )
