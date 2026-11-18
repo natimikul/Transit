@@ -907,37 +907,36 @@ if current_mode == "Архив":
     st.stop()
 
 # ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
-# Счета (все — и с примечанием, и без) — единый список с поиском, фильтром по статусу,
-# редактированием inline и выгрузкой в Excel. Примечание подсвечивается красным
-# если в нем есть текст, и сохраняется в БД при нажатии кнопки ниже.
-# ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
 # Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
-# «Разрешения» и др.) — список счетов с примечанием с поиском и фильтром.
+# «Разрешения» и др.) — единый список с поиском, фильтром по статусу и выгрузкой.
+# Поиск ведётся среди ВСЁХ счетов базы, таблица показывает только с примечанием.
 if current_mode == "Примечание" and is_admin:
     st.subheader("📝 Примечания к счетам")
-    st.caption("Счета с заполненным примечанием. Можно отфильтровать по статусу и выгрузить в Excel.")
+    st.caption("Поиск ведётся среди всех счетов базы. Таблица показывает только с примечанием.")
 
     notes_df = get_invoices_by_filters()
     if "note" in notes_df.columns:
-        # Показываем только счета с примечанием
-        notes_df = notes_df[
-            notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
-        ].copy()
+        # Флаг наличия примечания для подсветки и фильтрации таблицы
+        notes_df["_has_note"] = notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
     else:
-        notes_df = notes_df.iloc[0:0].copy()
+        notes_df["_has_note"] = False
 
+    # Поиск среди ВСЁХ счетов (даже без примечания)
     n_search = st.text_input("🔍 № счета или клиент:", key="note_search")
     if n_search.strip():
         notes_df = notes_df[notes_df.apply(
             lambda row: row.astype(str).str.contains(n_search.strip(), case=False, na=False).any(),
             axis=1)]
 
+    # Фильтруем по статусу
     n_status_opts = sorted(notes_df["status"].dropna().unique().tolist()) if "status" in notes_df.columns else []
     n_status_sel = st.multiselect("Статус (пусто = все):", n_status_opts, key="note_status_sel")
     if n_status_sel:
         notes_df = notes_df[notes_df["status"].isin(n_status_sel)]
 
-    notes_show = notes_df.rename(columns={
+    # Таблица показывает только счета с примечанием (_has_note=True)
+    notes_df_filtered = notes_df[notes_df["_has_note"]].copy()
+    notes_show = notes_df_filtered.rename(columns={
         'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
         'client': 'Клиент', 'warehouse': 'Склад', 'status': 'Статус',
         'note': 'Примечание', 'advert': 'Реклама',
