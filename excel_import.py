@@ -655,10 +655,10 @@ def classify_almaty_upload(almaty_df, file_df, short_mode=False):
                 else:
                     shipped.append({**base, "trip_name": trip_name, "trip_date": trip_date})
             elif doc in ignored_invoices:
-                # Строка в файле есть, но статус 1С ≠ «Отгружен» — статус не меняем
-                stay.append({**base,
-                             "trip_name": ignored_invoices[doc]["trip_name"],
-                             "trip_date": ignored_invoices[doc]["trip_date"]})
+                # Строка в файле есть, но статус 1С ≠ «Отгружен» («Выгружен в WMS»,
+                # «Не обрабатывать» и т.п.) — счёт игнорируем, статус не меняем
+                # и в предпросмотр не показываем.
+                continue
             elif not short_mode:
                 # В полном файле счёта нет совсем → клиент отказался
                 rejected.append(base)
