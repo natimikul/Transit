@@ -910,17 +910,21 @@ if current_mode == "Архив":
 # Счета (все — и с примечанием, и без) — единый список с поиском, фильтром по статусу,
 # редактированием inline и выгрузкой в Excel. Примечание подсвечивается красным
 # если в нем есть текст, и сохраняется в БД при нажатии кнопки ниже.
+# ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
+# Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
+# «Разрешения» и др.) — список счетов с примечанием с поиском и фильтром.
 if current_mode == "Примечание" and is_admin:
     st.subheader("📝 Примечания к счетам")
-    st.caption("Можно редактировать примечания inline, filtrie по статусу, редактировать inline и выгружать в Excel. "
-               "Подсветка: бледно-красный фон — если в примечании есть текст.")
+    st.caption("Счета с заполненным примечанием. Можно отфильтровать по статусу и выгрузить в Excel.")
 
     notes_df = get_invoices_by_filters()
     if "note" in notes_df.columns:
-        # Флаг: есть ли в счёт примечание (для подсветки, а не для фильтрации)
-        notes_df["_has_note"] = notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
+        # Показываем только счета с примечанием
+        notes_df = notes_df[
+            notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
+        ].copy()
     else:
-        notes_df["_has_note"] = False
+        notes_df = notes_df.iloc[0:0].copy()
 
     n_search = st.text_input("🔍 № счета или клиент:", key="note_search")
     if n_search.strip():
@@ -943,13 +947,11 @@ if current_mode == "Примечание" and is_admin:
     notes_show = notes_show[note_cols]
 
     if notes_show.empty:
-        st.info("📭 Нет счетов.")
+        st.info("📭 Нет счетов с заполненным примечанием.")
     else:
-        st.markdown(f"**Счетов: {len(notes_show)}**")
-        # data_editor с подсветкой: подсвечивает ячейки в колонке «Примечание»,
-        # если в исходных данных (_has_note) был текст
+        st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
         edited_notes = st.data_editor(
-            _highlight_notes_all(notes_show, "notes_editor2"),
+            _highlight_notes(notes_show, "notes_editor"),
             hide_index=True,
             use_container_width=True,
             column_config={
@@ -958,7 +960,6 @@ if current_mode == "Примечание" and is_admin:
             },
             key="notes_editor_df",
         )
-        # Сравниваем старое и новое значения, чтобы сохранить только изменения
         if st.button("💾 Сохранить примечания", type="primary"):
             changes_made = False
             for idx, row in edited_notes.iterrows():
@@ -981,7 +982,6 @@ if current_mode == "Примечание" and is_admin:
             else:
                 st.info("ℹ️ Изменений не было.")
             st.rerun()
-        # Экспорт в Excel
         notes_buf = BytesIO()
         with pd.ExcelWriter(notes_buf, engine='xlsxwriter') as writer:
             notes_show.to_excel(writer, index=False, sheet_name='Примечания')
