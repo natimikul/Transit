@@ -907,36 +907,67 @@ if current_mode == "Архив":
     st.stop()
 
 # ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
-# Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
-# «Разрешения» и др.) — единый список с поиском, фильтром по статусу и выгрузкой.
-# Поиск ведётся среди ВСЁХ счетов базы, таблица показывает только с примечанием.
+# Поиск идёт по ВСЕМ счетам базы — и с примечанием, и без. Без поиска таблица
+# показывает только счета с примечанием. Найденному счёту без примечания можно
+# сразу вписать примечание и сохранить его в БД (с автосинхронизацией в GitHub).
 if current_mode == "Примечание" and is_admin:
     st.subheader("📝 Примечания к счетам")
-    st.caption("Поиск ведётся среди всех счетов базы. Таблица показывает только с примечанием.")
+    st.caption("Поиск по номеру счёта или клиенту ищет среди всех счетов — и с примечанием, и без. "
+               "Без поиска показываются только счета, у которых примечание уже есть.")
+
+    def _note_text(v):
+        """None / NaN / пробелы -> '', иначе строка без крайних пробелов."""
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        return str(v).strip()
+
+    def _norm_q(v):
+        """Нормализация для поиска: без регистра, пробелов и разделителей."""
+        s = str(v).lower()
+        return "".join(ch for ch in s if ch not in " \t-–—_/\\.,")
 
     notes_df = get_invoices_by_filters()
     if "note" in notes_df.columns:
-        # Флаг наличия примечания для подсветки и фильтрации таблицы
-        notes_df["_has_note"] = notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
+        notes_df["_has_note"] = notes_df["note"].apply(lambda v: _note_text(v) != "")
     else:
         notes_df["_has_note"] = False
 
-    # Поиск среди ВСЁХ счетов (даже без примечания)
-    n_search = st.text_input("🔍 № счета или клиент:", key="note_search")
-    if n_search.strip():
+    n_search = st.text_input("🔍 № счета или клиент:", key="note_search").strip()
+
+    n_status_sel = []
+    if n_search:
+        # Поиск — среди всех счетов (и с примечанием, и без). Статусный фильтр
+        # при поиске не применяем, чтобы найденный счёт не пропадал из таблицы.
+        _base_df = notes_df
         notes_df = notes_df[notes_df.apply(
-            lambda row: row.astype(str).str.contains(n_search.strip(), case=False, na=False).any(),
+            lambda row: row.astype(str).str.contains(
+                n_search, case=False, na=False, regex=False).any(),
             axis=1)]
+        if notes_df.empty:
+            # Запасной вариант: игнорируем регистр, пробелы, дефисы и прочие
+            # разделители — «СЧКЗ-00298619», «счкз 00298619» и т.п. находят одно и то же.
+            _q = _norm_q(n_search)
+            if _q:
+                _norm_df = _base_df.astype(str).apply(
+                    lambda col: col.map(_norm_q))
+                notes_df = _base_df[_norm_df.apply(
+                    lambda row: any(_q in v for v in row), axis=1)]
+    else:
+        # Без поиска — только счета, у которых примечание уже заполнено
+        notes_df = notes_df[notes_df["_has_note"]].copy()
+        n_status_opts = (sorted(notes_df["status"].dropna().unique().tolist())
+                         if "status" in notes_df.columns else [])
+        n_status_sel = st.multiselect("Статус (пусто = все):", n_status_opts,
+                                     key="note_status_sel")
+        if n_status_sel:
+            notes_df = notes_df[notes_df["status"].isin(n_status_sel)]
 
-    # Фильтруем по статусу
-    n_status_opts = sorted(notes_df["status"].dropna().unique().tolist()) if "status" in notes_df.columns else []
-    n_status_sel = st.multiselect("Статус (пусто = все):", n_status_opts, key="note_status_sel")
-    if n_status_sel:
-        notes_df = notes_df[notes_df["status"].isin(n_status_sel)]
-
-    # Таблица показывает только счета с примечанием (_has_note=True)
-    notes_df_filtered = notes_df[notes_df["_has_note"]].copy()
-    notes_show = notes_df_filtered.rename(columns={
+    notes_show = notes_df.rename(columns={
         'id': 'ID', 'doc_number': '№ счета', 'invoice_date': 'Дата счета',
         'client': 'Клиент', 'warehouse': 'Склад', 'status': 'Статус',
         'note': 'Примечание', 'advert': 'Реклама',
@@ -946,41 +977,77 @@ if current_mode == "Примечание" and is_admin:
     notes_show = notes_show[note_cols]
 
     if notes_show.empty:
-        st.info("📭 Нет счетов с заполненным примечанием.")
+        if n_search:
+            st.warning(f"🔍 По запросу «{n_search}» ничего не найдено.")
+        else:
+            st.info("📭 Нет счетов с заполненным примечанием. "
+                    "Введите номер счёта в поиске, чтобы добавить примечание.")
     else:
-        st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
+        if n_search:
+            st.markdown(f"**Найдено счетов: {len(notes_show)}** "
+                        f"(с примечанием: {int(notes_show['Примечание'].apply(lambda v: _note_text(v) != '').sum())}). "
+                        "Можно вписать примечание и сохранить.")
+        else:
+            st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
+
+        # Ключ редактора и uuid стилера зависят от фильтра: при смене поиска
+        # редактор пересоздаётся, поэтому старые правки не «прилипают» к чужим строкам.
+        _filter_sig = n_search + "|" + ",".join(n_status_sel)
+        _editor_key = "notes_editor_df::" + _filter_sig
+        _sty_uuid = "notes_editor::" + _filter_sig
+
+        _editable_cols = {'Примечание'}
+        _col_cfg = {}
+        for _c in notes_show.columns:
+            if _c == 'Примечание':
+                _col_cfg[_c] = st.column_config.TextColumn(width="large",
+                                                           help="Введите примечание и нажмите «Сохранить»")
+            elif _c == 'ID':
+                _col_cfg[_c] = st.column_config.NumberColumn(disabled=True)
+            else:
+                _col_cfg[_c] = st.column_config.TextColumn(disabled=_c not in _editable_cols)
+
         edited_notes = st.data_editor(
-            _highlight_notes(notes_show, "notes_editor"),
+            _highlight_notes(notes_show, _sty_uuid),
             hide_index=True,
             use_container_width=True,
-            column_config={
-                'ID': st.column_config.NumberColumn(disabled=True),
-                'Примечание': st.column_config.TextColumn(width="large"),
-            },
-            key="notes_editor_df",
+            column_config=_col_cfg,
+            key=_editor_key,
         )
+
         if st.button("💾 Сохранить примечания", type="primary"):
-            changes_made = False
+            # Собираем только реально изменённые строки и пишем их через
+            # update_invoices_batch (пустая строка → NULL, т.е. примечание удаляется).
+            upd_rows = []
             for idx, row in edited_notes.iterrows():
-                orig_idx = notes_show.index.get_loc(idx) if idx in notes_show.index else -1
-                if orig_idx >= 0:
-                    new_note = str(row.get('Примечание', '') or '')
-                    old_note = str(notes_show.iloc[orig_idx].get('Примечание', '') or '')
-                    if new_note != old_note:
-                        doc_num = str(notes_show.iloc[orig_idx].get('№ счета', ''))
-                        import sqlite3
-                        from database import DB_NAME
-                        conn = sqlite3.connect(DB_NAME)
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE invoices SET note = ? WHERE doc_number = ?", (new_note, doc_num))
-                        conn.commit()
-                        conn.close()
-                        changes_made = True
-            if changes_made:
-                st.toast("✅ Примечания сохранены в БД.", icon="💾")
+                if idx not in notes_show.index:
+                    continue
+                old_row = notes_show.loc[idx]
+                if isinstance(old_row, pd.DataFrame):  # защита от дублей индекса
+                    old_row = old_row.iloc[0]
+                new_note = _note_text(row.get('Примечание'))
+                old_note = _note_text(old_row.get('Примечание'))
+                if new_note == old_note:
+                    continue
+                inv_id = old_row.get('ID')
+                if pd.isna(inv_id):
+                    continue
+                upd_rows.append({"id": int(inv_id), "note": new_note})
+
+            if upd_rows:
+                update_invoices_batch(pd.DataFrame(upd_rows))
+                saved_ok = False
+                try:
+                    saved_ok = sync_db_to_github()
+                except Exception:
+                    saved_ok = False
+                st.toast("✅ Примечания сохранены в БД" + (" и в GitHub." if saved_ok
+                         else ". Синхронизация с GitHub не удалась."), icon="💾")
             else:
                 st.info("ℹ️ Изменений не было.")
             st.rerun()
+
+        # Экспорт в Excel — ровно то, что видно в таблице
         notes_buf = BytesIO()
         with pd.ExcelWriter(notes_buf, engine='xlsxwriter') as writer:
             notes_show.to_excel(writer, index=False, sheet_name='Примечания')
@@ -991,7 +1058,9 @@ if current_mode == "Примечание" and is_admin:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="btn_notes_xlsx",
         )
-    st.stop()# ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
+    st.stop()
+
+# ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
 if current_mode == "Админ-панель" and is_admin:
     st.subheader("⚙️ Панель администратора")
 
