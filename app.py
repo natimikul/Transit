@@ -1,4 +1,25 @@
-# --- ДОПОЛНИТЕЛЬНЫЕ ИМПОРТЫ ДЛЯ ОТПРАВКИ ПОЧТЫ (Добавить в начало файла) ---
+def _highlight_notes_all(df_disp, uuid, col="Примечание", color="#ffcccc"):
+    """Подсветка ячеек в колонке col для всех строк (включая пустые примечания).
+
+    Возвращает pandas Styler: ячейки, где в значении есть текст — с фоном color.
+    uuid — идентификатор для data_editor, чтобы не сбрасывались правки.
+    """
+    if col not in df_disp.columns:
+        return df_disp
+    try:
+        sty = df_disp.style
+        sty.set_uuid(uuid)
+
+        def _hl(v):
+            return f"background-color: {color}" if isinstance(v, str) and v.strip() else ""
+
+        try:
+            sty = sty.map(_hl, subset=[col])       # pandas >= 2.1
+        except AttributeError:
+            sty = sty.applymap(_hl, subset=[col])  # pandas < 2.1
+        return sty
+    except Exception:
+        return df_disp# --- ДОПОЛНИТЕЛЬНЫЕ ИМПОРТЫ ДЛЯ ОТПРАВКИ ПОЧТЫ (Добавить в начало файла) ---
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -886,20 +907,20 @@ if current_mode == "Архив":
     st.stop()
 
 # ==================== ПРИМЕЧАНИЯ (просмотр + редактирование + выгрузка) ====================
-# Счета с заполненным примечанием (вносятся вручную на вкладках «Создан»,
-# «Разрешения» и др.) — единый список с поиском, фильтром по статусу,
-# редактированием inline и выгрузкой в Excel.
+# Счета (все — и с примечанием, и без) — единый список с поиском, фильтром по статусу,
+# редактированием inline и выгрузкой в Excel. Примечание подсвечивается красным
+# если в нем есть текст, и сохраняется в БД при нажатии кнопки ниже.
 if current_mode == "Примечание" and is_admin:
     st.subheader("📝 Примечания к счетам")
-    st.caption("Все счета с заполненным примечанием. Можно редактировать примечания inline, фильтровать и выгружать в Excel.")
+    st.caption("Можно редактировать примечания inline, filtrie по статусу, редактировать inline и выгружать в Excel. "
+               "Подсветка: бледно-красный фон — если в примечании есть текст.")
 
     notes_df = get_invoices_by_filters()
     if "note" in notes_df.columns:
-        notes_df = notes_df[
-            notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
-        ].copy()
+        # Флаг: есть ли в счёт примечание (для подсветки, а не для фильтрации)
+        notes_df["_has_note"] = notes_df["note"].notna() & (notes_df["note"].astype(str).str.strip() != "")
     else:
-        notes_df = notes_df.iloc[0:0].copy()
+        notes_df["_has_note"] = False
 
     n_search = st.text_input("🔍 № счета или клиент:", key="note_search")
     if n_search.strip():
@@ -922,12 +943,13 @@ if current_mode == "Примечание" and is_admin:
     notes_show = notes_show[note_cols]
 
     if notes_show.empty:
-        st.info("📭 Нет счетов с заполненным примечанием.")
+        st.info("📭 Нет счетов.")
     else:
-        st.markdown(f"**Счетов с примечанием: {len(notes_show)}**")
-        # Используем data_editor вместо dataframe — можно редактировать ячейки inline
+        st.markdown(f"**Счетов: {len(notes_show)}**")
+        # data_editor с подсветкой: подсвечивает ячейки в колонке «Примечание»,
+        # если в исходных данных (_has_note) был текст
         edited_notes = st.data_editor(
-            _highlight_notes(notes_show, "notes_editor"),
+            _highlight_notes_all(notes_show, "notes_editor2"),
             hide_index=True,
             use_container_width=True,
             column_config={
@@ -946,7 +968,6 @@ if current_mode == "Примечание" and is_admin:
                     old_note = str(notes_show.iloc[orig_idx].get('Примечание', '') or '')
                     if new_note != old_note:
                         doc_num = str(notes_show.iloc[orig_idx].get('№ счета', ''))
-                        # Обновляем note в БД по doc_number
                         import sqlite3
                         from database import DB_NAME
                         conn = sqlite3.connect(DB_NAME)
@@ -960,6 +981,7 @@ if current_mode == "Примечание" and is_admin:
             else:
                 st.info("ℹ️ Изменений не было.")
             st.rerun()
+        # Экспорт в Excel
         notes_buf = BytesIO()
         with pd.ExcelWriter(notes_buf, engine='xlsxwriter') as writer:
             notes_show.to_excel(writer, index=False, sheet_name='Примечания')
@@ -970,9 +992,7 @@ if current_mode == "Примечание" and is_admin:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="btn_notes_xlsx",
         )
-    st.stop()
-
-# ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
+    st.stop()# ==================== АДМИН-ПАНЕЛЬ (НОВАЯ ВЕРСИЯ) ====================
 if current_mode == "Админ-панель" and is_admin:
     st.subheader("⚙️ Панель администратора")
 
