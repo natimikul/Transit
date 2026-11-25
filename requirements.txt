@@ -3,4 +3,5 @@ pandas
 xlsxwriter
 xlrd
 openpyxl
-bcrypt# deploy refresh 2026-11-25 (force clean rebuild)
+bcrypt
+# deploy refresh 2026-11-25 (force clean rebuild)
