@@ -4,7 +4,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from database import get_active_cars, get_car_invoice_doc_numbers
+from database import get_active_cars, get_car_invoice_doc_numbers, is_car_delayed
 
 
 def show_replenishment_page():
@@ -57,10 +57,16 @@ def show_replenishment_page():
             f"📍 Локация: {location} | "
             f"🏁 План прибытия: {estimated_arrival}"
         )
+        car_delayed = is_car_delayed(car)
+        if car_delayed:
+            header_title += " | ⚠️ Задержка прибытия"
 
         is_expanded = True if search_query else False
 
         with st.expander(header_title, expanded=is_expanded):
+            if car_delayed:
+                st.warning("⚠️ Задержка прибытия: плановая дата уже прошла "
+                           "или отмечена вручную в админ-панели.")
             doc_col1, doc_col2 = st.columns(2)
 
             with doc_col1:

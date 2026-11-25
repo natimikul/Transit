@@ -48,6 +48,7 @@ from database import (
     get_arrived_cars, sync_db_to_github, check_github_token,
     get_email_recipients, remember_email_recipients,
     get_car_extra_items, save_car_extra_items,
+    sync_all_car_delays, set_car_delay_status, is_car_delayed,
     get_archive_candidates, archive_old_invoices, restore_from_archive,
     delete_archive_rows, get_archive_invoices, get_archive_stats,
     get_invoices_by_auto_id
@@ -55,6 +56,8 @@ from database import (
 
 # Инициализируем базу данных при старте
 init_db()
+# Авто, у которых плановая дата прибытия уже прошла, → счета «Задержка прибытия»
+sync_all_car_delays()
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
 st.set_page_config(page_title="Система мониторинга", layout="wide")
@@ -137,8 +140,8 @@ is_admin = st.session_state.get("admin_status") == "admin"
 
 list_all_statuses = [
     "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-    "Задержка поставки", "Прибыл на склад Алматы", "Готов к отгрузке клиенту",
-    "Отгружено клиенту", "Отказ"
+    "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+    "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
 ]
 
 # --- 3. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ СОСТОЯНИЯ ---
@@ -375,14 +378,19 @@ with col_cars:
         st.caption("📭 Нет активных авто.")
     else:
         _car_rows = []
+        _delayed_cars = []
         for _i, _r in _cars_df.iterrows():
             _docs = [d for d in str(_r.get("doc_number", "")).split("\n") if d.strip()]
             _repl = " 📦" if int(_r.get("is_replenishment", 0) or 0) else ""
+            _delayed = is_car_delayed(_r)
+            if _delayed:
+                _delayed_cars.append(int(_r["id"]))
             _car_rows.append({
                 "Авто": f"#{int(_r['id'])}{_repl}",
                 "🌐": str(_r.get("country", "") or "") or "—",
                 "📍": str(_r.get("location", "") or "") or "—",
                 "📅": str(_r.get("estimated_arrival", "") or "") or "—",
+                "Задержка прибытия": "⚠️ Да" if _delayed else "—",
                 "📄 Доки": len(_docs),
             })
         _car_disp = pd.DataFrame(_car_rows)
@@ -396,9 +404,13 @@ with col_cars:
                 "🌐": st.column_config.TextColumn(width="small", help="Страна"),
                 "📍": st.column_config.TextColumn(width="small", help="Текущая локация"),
                 "📅": st.column_config.TextColumn(width="small", help="Плановая дата прибытия в Алматы"),
+                "Задержка прибытия": st.column_config.TextColumn(width="small", help="Вручную или плановая дата прибытия уже прошла"),
                 "📄 Доки": st.column_config.NumberColumn(width="small", help="Кол-во документов ПкЦБ (полный список и все счета — в скачиваемом Excel)"),
             }
         )
+        if _delayed_cars:
+            st.warning("⚠️ Задержка прибытия: " + ", ".join(
+                f"Авто #{cid}" for cid in _delayed_cars))
 
         # Нажатие по авто внутри таблицы (галочка строки) = скачивание XLS
         st.caption("☑ Нажмите галочку у авто — скачается Excel с документами:")
@@ -648,6 +660,56 @@ def send_today_report_email(recipient_emails):
         return False
 
 
+STATUS_EMAIL_XLS_COLUMNS = [
+    "№ счета", "Дата счета", "Клиент", "Склад", "Статус",
+    "Дата прибытия / расценки", "№ ПкЦБ",
+]
+
+
+def build_status_email_xls(df, status, status_label=None):
+    """Excel-вложение письма о прибытии/расценке.
+
+    Колонки: № счета, дата счета, клиент, склад, статус,
+    дата прибытия или расценки, номер ПкЦБ.
+    """
+    status_label = status_label or (
+        "Прибыл на склад Алматы" if "Прибыл" in status
+        else "Готов к отгрузке клиенту")
+
+    def _cell(row, key):
+        v = row.get(key)
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(v).strip()
+
+    is_arrival = "Прибыл" in status
+    rows = []
+    for _, r in df.iterrows():
+        if is_arrival:
+            date_val = _cell(r, "fact_arrival") or _cell(r, "rated_date")
+        else:
+            date_val = _cell(r, "rated_date") or _cell(r, "fact_arrival")
+        rows.append({
+            "№ счета": _cell(r, "doc_number"),
+            "Дата счета": _cell(r, "invoice_date"),
+            "Клиент": _cell(r, "client"),
+            "Склад": _cell(r, "warehouse"),
+            "Статус": _cell(r, "status") or status_label,
+            "Дата прибытия / расценки": date_val,
+            "№ ПкЦБ": _cell(r, "pkcb"),
+        })
+    xls_df = pd.DataFrame(rows, columns=STATUS_EMAIL_XLS_COLUMNS)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        xls_df.to_excel(writer, index=False, sheet_name=str(status_label)[:31])
+    return buffer.getvalue()
+
+
 def send_status_email(status, recipient_emails, invoices_df=None):
     """
     Email-рассылка по счетам определённого статуса.
@@ -746,17 +808,11 @@ def send_status_email(status, recipient_emails, invoices_df=None):
 """
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-    # Прикрепляем Excel-вложение: только «№ счета» и «ПкЦБ»
-    xls_df = df[['doc_number', 'pkcb']].rename(
-        columns={'doc_number': '№ счета', 'pkcb': 'ПкЦБ'})
-    xls_df = xls_df.copy()
-    for c in xls_df.columns:
-        xls_df[c] = xls_df[c].fillna('').astype(str)
-    excel_buffer = BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-        xls_df.to_excel(writer, index=False, sheet_name=status_label[:31])
+    # Прикрепляем Excel-вложение: счёт, дата, клиент, склад, статус,
+    # дата прибытия/расценки и номер ПкЦБ.
+    xls_bytes = build_status_email_xls(df, status, status_label)
     part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    part.set_payload(excel_buffer.getvalue())
+    part.set_payload(xls_bytes)
     encoders.encode_base64(part)
     part.add_header('Content-Disposition', 'attachment',
                     filename=f"{status_label}_{today_formatted}.xlsx".replace(' ', '_'))
@@ -804,35 +860,45 @@ def _split_emails(value):
     return result
 
 
-def group_extra_items_by_email(items):
-    """Группирует пункты переданного товара по адресатам.
+def group_extra_items_by_recipients(items):
+    """Группирует пункты переданного товара по наборам адресатов.
 
     items — список {'item': ..., 'email': ...} (как в таблице авто).
     В поле email можно указать несколько адресов через запятую, точку
-    с запятой или пробел — каждый получит письмо со своими пунктами.
+    с запятой или пробел: на все адреса строки уйдёт ОДНО письмо.
+    Строки с одинаковым набором адресов объединяются — пункты складываются.
+
     Возвращает (grouped, invalid):
-      grouped — {email_lower: {'email': исходный, 'items': [пункты]}}
+      grouped — {key: {'emails': [адреса], 'items': [пункты]}}
       invalid — строки без пункта или с пустым/некорректным e-mail.
-    Один адресат получает одно письмо со всеми своими пунктами.
     """
     grouped = {}
     invalid = []
     for it in items or []:
         item = str(it.get("item") or "").strip() if isinstance(it, dict) else ""
         raw_emails = str(it.get("email") or "").strip() if isinstance(it, dict) else ""
-        emails = _split_emails(raw_emails)
-        if not item or not emails:
-            invalid.append({"item": item, "email": raw_emails})
-            continue
-        for email in emails:
+        addresses = []
+        seen = set()
+        invalid_before = len(invalid)
+        for email in _split_emails(raw_emails):
             if not _is_valid_email(email):
                 invalid.append({"item": item, "email": email})
                 continue
             key = email.lower()
-            if key not in grouped:
-                grouped[key] = {"email": email, "items": []}
-            if item not in grouped[key]["items"]:
-                grouped[key]["items"].append(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            addresses.append(email)
+        if not item or not addresses:
+            # Строка без пункта или без валидного адреса: сообщаем один раз,
+            # если ошибка ещё не была записана выше.
+            if len(invalid) == invalid_before:
+                invalid.append({"item": item, "email": raw_emails})
+            continue
+        set_key = tuple(sorted(a.lower() for a in addresses))
+        group = grouped.setdefault(set_key, {"emails": addresses, "items": []})
+        if item not in group["items"]:
+            group["items"].append(item)
     return grouped, invalid
 
 
@@ -845,14 +911,41 @@ def build_extra_items_email_body(items, date_str=None):
             f"Для Вас дополнительно передали:\n{lines}\n")
 
 
-def send_extra_items_email(car_id, items):
+OSP_KZ_EMAIL = "osp_kz@tools.by"
+
+
+def _osp_copy_list(to_emails):
+    """Адреса для копии osp_kz@tools.by (если его нет среди получателей)."""
+    normalized = {str(e).strip().lower() for e in (to_emails or [])}
+    if OSP_KZ_EMAIL.lower() in normalized:
+        return []
+    return [OSP_KZ_EMAIL]
+
+
+def _attach_files(msg, attachments):
+    """Прикрепляет файлы [{'name', 'data', 'mime'}] к письму."""
+    for att in attachments or []:
+        data = att.get("data") or b""
+        filename = att.get("name") or "file"
+        mime = str(att.get("mime") or "application/octet-stream")
+        maintype, _, subtype = mime.partition("/")
+        part = MIMEBase(maintype or "application", subtype or "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
+
+
+def send_extra_items_email(car_id, items, attachments=None):
     """Отправляет информационные письма о прибытии авто.
 
-    Одно письмо на каждый уникальный адрес со списком его пунктов.
+    Одно письмо на каждый набор адресатов: все адреса строки идут в To,
+    пункты объединяются по набору адресов. Копия — osp_kz@tools.by.
+    attachments — список {'name', 'data', 'mime'} (pdf/jpg и т.п.).
     Возвращает {'sent': int, 'failed': [адреса], 'invalid': [строки]}.
     """
     result = {"sent": 0, "failed": [], "invalid": []}
-    grouped, invalid = group_extra_items_by_email(items)
+    grouped, invalid = group_extra_items_by_recipients(items)
     result["invalid"] = invalid
     if not grouped:
         return result
@@ -862,7 +955,7 @@ def send_extra_items_email(car_id, items):
         sender_password = st.secrets["email"]["sender_password"]
     except (KeyError, FileNotFoundError):
         st.error("❌ Не настроены параметры почты в st.secrets (раздел [email]).")
-        result["failed"] = [d["email"] for d in grouped.values()]
+        result["failed"] = [", ".join(d["emails"]) for d in grouped.values()]
         return result
 
     date_str = datetime.date.today().strftime('%d.%m.%Y')
@@ -872,21 +965,26 @@ def send_extra_items_email(car_id, items):
         server.login(sender_email, sender_password)
     except Exception as e:
         st.error(f"Не удалось подключиться к почтовому серверу. Ошибка: {e}")
-        result["failed"] = [d["email"] for d in grouped.values()]
+        result["failed"] = [", ".join(d["emails"]) for d in grouped.values()]
         return result
 
     for data in grouped.values():
+        to_list = list(data["emails"])
+        cc_list = _osp_copy_list(to_list)
         msg = MIMEMultipart()
         msg['From'] = sender_email
-        msg['To'] = data["email"]
+        msg['To'] = ", ".join(to_list)
+        if cc_list:
+            msg['Cc'] = ", ".join(cc_list)
         msg['Subject'] = f"Транзит — прибытие авто #{car_id} — {date_str}"
         msg.attach(MIMEText(build_extra_items_email_body(data["items"], date_str),
                            'plain', 'utf-8'))
+        _attach_files(msg, attachments)
         try:
-            server.sendmail(sender_email, [data["email"]], msg.as_string())
+            server.sendmail(sender_email, to_list + cc_list, msg.as_string())
             result["sent"] += 1
         except Exception:
-            result["failed"].append(data["email"])
+            result["failed"].append(", ".join(to_list))
 
     try:
         server.quit()
@@ -894,7 +992,8 @@ def send_extra_items_email(car_id, items):
         pass
 
     try:
-        remember_email_recipients(", ".join(d["email"] for d in grouped.values()))
+        remember_email_recipients(
+            ", ".join(e for d in grouped.values() for e in d["emails"]))
     except Exception:
         pass
 
@@ -2122,7 +2221,8 @@ if current_mode == "Админ-панель" and is_admin:
                 car_id = car['id']
                 flag = "🇷🇺" if "росс" in str(car.get('country', '')).lower() or "рф" in str(car.get('country', '')).lower() else "🇧🇾"
                 repl_tag = " | 📦 пополнение склада" if int(car.get('is_replenishment', 0) or 0) else ""
-                header = f"{flag} Авто #{car_id} | Отгрузка: {car.get('dispatch_date', '-')} | {car.get('location', '-')} | План: {car.get('estimated_arrival', '-')}{repl_tag}"
+                delay_tag = " | ⚠️ Задержка прибытия" if is_car_delayed(car) else ""
+                header = f"{flag} Авто #{car_id} | Отгрузка: {car.get('dispatch_date', '-')} | {car.get('location', '-')} | План: {car.get('estimated_arrival', '-')}{repl_tag}{delay_tag}"
 
                 with st.expander(header, expanded=False):
                     docs_list = [d.strip() for d in str(car.get('doc_number', '')).split("\n") if d.strip()]
@@ -2140,6 +2240,12 @@ if current_mode == "Админ-панель" and is_admin:
                     with col_e2:
                         edit_location = st.text_input("Локация", value=car.get('location', ''), key=f"edit_location_{car_id}")
                         edit_est_arrival = st.text_input("Плановая дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
+                        _manual_delay = str(car.get('delay_status') or '').strip() != ""
+                        edit_delay = st.checkbox(
+                            "⚠️ Задержка прибытия (вручную)", value=_manual_delay,
+                            key=f"edit_delay_{car_id}",
+                            help="Счета авто получат статус «Задержка прибытия». "
+                                 "Также ставится автоматически, если плановая дата уже прошла.")
                     with col_e3:
                         edit_docs = st.text_area("№ документов (ПкЦБ) — по одному в строке",
                                                   value="\n".join(docs_list), key=f"edit_docs_{car_id}", height=80)
@@ -2151,9 +2257,11 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_rkz_clean = "\n".join([d.strip() for d in edit_rkz.split("\n") if d.strip()])
                         update_car(car_id, edit_dispatch, edit_country, edit_location,
                                    edit_docs_clean, edit_rkz_clean, edit_est_arrival)
-                        link_statuses = ['В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
+                        link_statuses = ['В пути', 'Задержка прибытия', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
                         linked_rkz = link_auto_to_invoices_by_rkz(car_id, [r for r in edit_rkz_clean.split("\n") if r.strip()], status_list=link_statuses)
                         linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()], status_list=link_statuses)
+                        # Ручная отметка задержки + пересчёт по плановой дате
+                        set_car_delay_status(car_id, edit_delay)
                         msg = f"✅ Данные авто #{car_id} обновлены."
                         if linked_rkz or linked_pkcb:
                             msg += f" Доп. привязано счетов: {linked_rkz} (РКЗ) + {linked_pkcb} (ПкЦБ)."
@@ -2182,7 +2290,8 @@ if current_mode == "Админ-панель" and is_admin:
                     st.markdown("**📦 Переданный товар / документы:**")
                     st.caption("Одна строка = пункт + e-mail. Пунктов может быть несколько. "
                                "В поле Email можно указать несколько адресов через запятую — "
-                               "каждый получит письмо со всеми своими пунктами. "
+                               "все они получат ОДНО письмо со всеми пунктами строки. "
+                               "Копия письма всегда уходит на osp_kz@tools.by. "
                                "Кнопка «Отправить письмо» вышлет письма всем адресатам.")
 
                     _extra_items = get_car_extra_items(car_id)
@@ -2211,6 +2320,30 @@ if current_mode == "Админ-панель" and is_admin:
                             if _item or _email:
                                 _items_to_save.append({"item": _item, "email": _email})
 
+                    st.markdown("**📎 Вложения к письму (PDF/JPG):**")
+                    _uploaded_extra = st.file_uploader(
+                        "Прикрепить изображения товара/документов",
+                        type=["pdf", "jpg", "jpeg"],
+                        accept_multiple_files=True,
+                        key=f"extra_files_{car_id}",
+                        help="Файлы будут прикреплены к каждому письму об этом авто",
+                    )
+                    _attachments = []
+                    for _uf in _uploaded_extra or []:
+                        _attachments.append({
+                            "name": _uf.name,
+                            "data": _uf.getvalue(),
+                            "mime": _uf.type or "application/octet-stream",
+                        })
+                    if _attachments:
+                        _total_mb = sum(len(_a["data"]) for _a in _attachments) / (1024 * 1024)
+                        st.caption(f"Вложений: {len(_attachments)} — "
+                                   + ", ".join(_a["name"] for _a in _attachments)
+                                   + f" ({_total_mb:.1f} МБ)")
+                        if _total_mb > 20:
+                            st.warning("⚠️ Вложения больше 20 МБ — почтовый сервер "
+                                       "может отклонить письмо.")
+
                     _col_x1, _col_x2 = st.columns(2)
                     with _col_x1:
                         if st.button("💾 Сохранить список", key=f"btn_save_extra_{car_id}"):
@@ -2222,7 +2355,8 @@ if current_mode == "Админ-панель" and is_admin:
                         if st.button("📧 Отправить письмо", key=f"btn_send_extra_{car_id}",
                                      type="primary"):
                             save_car_extra_items(car_id, _items_to_save)
-                            _res = send_extra_items_email(car_id, _items_to_save)
+                            _res = send_extra_items_email(car_id, _items_to_save,
+                                                          attachments=_attachments)
                             if _res["sent"]:
                                 st.success(f"✅ Отправлено писем: {_res['sent']}.")
                             if _res["failed"]:
@@ -2305,13 +2439,27 @@ if current_mode == "Админ-панель" and is_admin:
                     for col in ['№ счета', 'Дата счета', 'Клиент', 'Склад', 'Дата прибытия', 'Расценен', 'Статус', 'Примечание', 'Реклама']:
                         if col in disp.columns:
                             disp[col] = disp[col].fillna('').astype(str)
-                    disp.insert(0, '✅ Отметка', False)
+                    _sa_ver_key = f"sel_all_alm_ver_{car_id}"
+
+                    def _alm_toggle_all(_cid=car_id):
+                        _vk = f"sel_all_alm_ver_{_cid}"
+                        st.session_state[_vk] = int(st.session_state.get(_vk, 0)) + 1
+
+                    sel_all_alm = st.checkbox(
+                        "☑️ Отметить все счета этого авто", value=False,
+                        key=f"sel_all_alm_{car_id}", on_change=_alm_toggle_all,
+                        help="Одна галочка отмечает все строки; любую строку можно снять отдельно")
+
+                    disp.insert(0, '✅ Отметка', bool(sel_all_alm))
                     disp.insert(1, '🗑️ Удалить', False)
                     available = [c for c in ['✅ Отметка', '🗑️ Удалить', 'ID', '№ счета', 'Дата счета', 'Клиент', 'Склад',
                                               'Дата прибытия', 'Расценен', 'Статус', 'Реклама', 'Примечание'] if c in disp.columns]
                     disp = disp[available]
 
-                    editor_key = f"editor_almaty_{car_id}"
+                    # Версия в ключе: при переключении «Отметить все» редактор
+                    # пересоздаётся и показывает новые галочки.
+                    _sa_ver = int(st.session_state.get(_sa_ver_key, 0))
+                    editor_key = f"editor_almaty_{car_id}_{_sa_ver}"
                     edited = st.data_editor(
                         disp,
                         column_config={
@@ -2335,17 +2483,17 @@ if current_mode == "Админ-панель" and is_admin:
                         num_rows="fixed", key=editor_key
                     )
 
-                    editor_state = st.session_state.get(editor_key, {})
-                    edited_rows = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
                     row_to_id = {pos: int(df_car.iloc[pos]['id']) for pos in range(len(df_car))}
 
                     selected_ids = []
                     to_del_ids = []
                     for pos in range(len(df_car)):
-                        changes = edited_rows.get(pos, {})
-                        if changes.get('✅ Отметка') is True:
+                        row = edited.iloc[pos] if pos < len(edited) else None
+                        if row is None:
+                            continue
+                        if bool(row.get('✅ Отметка', False)):
                             selected_ids.append(row_to_id.get(pos))
-                        if changes.get('🗑️ Удалить') is True:
+                        if bool(row.get('🗑️ Удалить', False)):
                             to_del_ids.append(row_to_id.get(pos))
 
                     col_r1, col_r2 = st.columns([1, 2])
@@ -2864,8 +3012,8 @@ if current_mode == "Админ-панель" and is_admin:
             with col_f6:
                 new_status = st.selectbox("Статус", [
                     "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                    "Задержка поставки", "Прибыл на склад Алматы", "Готов к отгрузке клиенту",
-                    "Отгружено клиенту", "Отказ"
+                    "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                    "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
                 ])
             with col_f7:
                 new_plan_ship = st.text_input("Плановая дата отгрузки", help="ДД.ММ.ГГГГ")
@@ -2928,8 +3076,8 @@ if current_mode == "Админ-панель" and is_admin:
         with db_filter_col2:
             db_status_filter = st.multiselect("Фильтр по статусу:", [
                 "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                "Задержка поставки", "Прибыл на склад Алматы", "Готов к отгрузке клиенту",
-                "Отгружено клиенту", "Отказ"
+                "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
             ], key="db_status_filter")
 
         all_invoices = get_all_invoices()
@@ -2986,8 +3134,8 @@ if current_mode == "Админ-панель" and is_admin:
                     'ПкЦБ': st.column_config.TextColumn(),
                     'Статус': st.column_config.SelectboxColumn(options=[
                         "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                        "Задержка поставки", "Прибыл на склад Алматы", "Готов к отгрузке клиенту",
-                        "Отгружено клиенту", "Отказ"
+                        "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                        "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
                     ]),
                     'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
                     'Дата отгрузки (факт)': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
@@ -3253,7 +3401,7 @@ elif current_mode == "В сборке":
 
 elif current_mode == "Отгружено":
     st.session_state.current_report = build_report(
-        cols_all, status_list=["В пути"],
+        cols_all, status_list=["В пути", "Задержка прибытия"],
         invoice_text=invoice_input, client_text=client_input,
         advert_text=advert_input,
         start_dt=start_filter, end_dt=end_filter,
