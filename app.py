@@ -390,7 +390,6 @@ with col_cars:
                 "🌐": str(_r.get("country", "") or "") or "—",
                 "📍": str(_r.get("location", "") or "") or "—",
                 "📅": str(_r.get("estimated_arrival", "") or "") or "—",
-                "Задержка прибытия": "⚠️ Да" if _delayed else "—",
                 "📄 Доки": len(_docs),
             })
         _car_disp = pd.DataFrame(_car_rows)
@@ -404,7 +403,6 @@ with col_cars:
                 "🌐": st.column_config.TextColumn(width="small", help="Страна"),
                 "📍": st.column_config.TextColumn(width="small", help="Текущая локация"),
                 "📅": st.column_config.TextColumn(width="small", help="Плановая дата прибытия в Алматы"),
-                "Задержка прибытия": st.column_config.TextColumn(width="small", help="Вручную или плановая дата прибытия уже прошла"),
                 "📄 Доки": st.column_config.NumberColumn(width="small", help="Кол-во документов ПкЦБ (полный список и все счета — в скачиваемом Excel)"),
             }
         )
@@ -710,6 +708,52 @@ def build_status_email_xls(df, status, status_label=None):
     return buffer.getvalue()
 
 
+def _email_cell(value):
+    """Текст для письма: None/NaN → «-», иначе строка без лишних пробелов."""
+    if value is None:
+        return "-"
+    try:
+        if pd.isna(value):
+            return "-"
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or "-"
+
+
+def build_status_email_rows_text(df):
+    """Список счетов в письме: № счета, клиент и ПкЦБ."""
+    lines = []
+    for _, r in df.iterrows():
+        lines.append(
+            f"  • № счета: {_email_cell(r.get('doc_number'))} "
+            f"| Клиент: {_email_cell(r.get('client'))} "
+            f"| ПкЦБ: {_email_cell(r.get('pkcb'))}"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def build_pkcb_in_auto_text(auto_ids, cars_rows):
+    """Документы ПкЦБ авто — как в карточке авто, слова-пометки сохраняются.
+
+    cars_rows — строки get_all_cars_from_db():
+    (id, dispatch_date, country, location, doc_number, ...).
+    """
+    text = ""
+    for aid in auto_ids or []:
+        try:
+            aid_int = int(aid)
+        except (TypeError, ValueError):
+            continue
+        car_row = next(
+            (c for c in (cars_rows or []) if int(c[0]) == aid_int), None)
+        if car_row is None:
+            continue
+        docs = [d.strip() for d in str(car_row[4] or "").split("\n") if d.strip()]
+        text += "".join(f"  • {d}\n" for d in docs)
+    return text
+
+
 def send_status_email(status, recipient_emails, invoices_df=None):
     """
     Email-рассылка по счетам определённого статуса.
@@ -752,13 +796,8 @@ def send_status_email(status, recipient_emails, invoices_df=None):
     today_formatted = datetime.date.today().strftime('%d.%m.%Y')
     status_label = "Прибыл на склад Алматы" if "Прибыл" in status else "Готов к отгрузке клиенту"
 
-    # Формируем тело письма: только № счета и ПкЦБ
-    rows_text = ""
-    for _, r in df.iterrows():
-        rows_text += (
-            f"  • № счета: {r.get('doc_number', '-')} "
-            f"| ПкЦБ: {r.get('pkcb', '-') or '-'}\n"
-        )
+    # Формируем тело письма: № счета, клиент и ПкЦБ
+    rows_text = build_status_email_rows_text(df)
 
     # Данные ПкЦБ в авто: документы авто из auto_in_transit (по auto_id счетов)
     pkcb_in_auto_text = ""
@@ -774,14 +813,8 @@ def send_status_email(status, recipient_emails, invoices_df=None):
         try:
             # get_all_cars_from_db() возвращает кортежи: (id, dispatch_date, country,
             # location, doc_number, rkz_number, estimated_arrival, fact_arrival_date, is_arrived)
-            _cars_all = get_all_cars_from_db()
-            for _aid in _auto_ids:
-                _car_row_c = next((c for c in _cars_all if int(c[0]) == _aid), None)
-                if _car_row_c is None:
-                    continue
-                _docs_c = [d.strip() for d in str(_car_row_c[4] or "").split("\n") if d.strip()]
-                if _docs_c:
-                    pkcb_in_auto_text += "".join(f"  • {d}\n" for d in _docs_c)
+            pkcb_in_auto_text = build_pkcb_in_auto_text(
+                _auto_ids, get_all_cars_from_db())
         except Exception:
             pkcb_in_auto_text = ""
 

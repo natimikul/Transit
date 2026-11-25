@@ -777,7 +777,7 @@ def get_invoices_for_email(status):
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query(
         """SELECT doc_number, invoice_date, client, warehouse, status,
-                  fact_arrival, rated_date, pkcb
+                  fact_arrival, rated_date, pkcb, auto_id
            FROM invoices WHERE status = ? ORDER BY timestamp DESC""",
         conn, params=(status,)
     )
