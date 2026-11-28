@@ -235,7 +235,7 @@ def import_invoices_to_db(parsed_df, added_by="admin"):
     cursor = conn.cursor()
 
     # Статусы, на которые импорт не влияет (счёт уже в пути/на складе/отгружен)
-    protected_statuses = ("В пути", "Прибыл на склад Алматы",
+    protected_statuses = ("В пути", "Задержка поставки", "Прибыл на склад Алматы",
                           "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ")
     protected_ph = ",".join("?" * len(protected_statuses))
 
@@ -540,7 +540,7 @@ def import_cars_export(uploaded_file):
             auto_id = cursor.lastrowid
             saved_count += 1
 
-        link_statuses = ('В пути', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту')
+        link_statuses = ('В пути', 'Задержка поставки', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту')
         status_ph = ",".join("?" * len(link_statuses))
         if rkz_number:
             rkz_list = [r.strip() for r in rkz_number.split("\n") if r.strip()]

@@ -146,7 +146,7 @@ def init_db():
     _add_column_if_missing(cursor, "auto_in_transit", "is_replenishment", "INTEGER DEFAULT 0")
     # Переданный товар/документы для клиентов: JSON [{"item": "...", "email": "..."}]
     _add_column_if_missing(cursor, "auto_in_transit", "extra_items", "TEXT")
-    # Ручная отметка «Задержка прибытия» (пусто = авто-режим по план. дате)
+    # Ручная отметка «Задержка поставки» (пусто = авто-режим по план. дате)
     _add_column_if_missing(cursor, "auto_in_transit", "delay_status", "TEXT")
 
     # Таблица запомненных адресатов email (для выпадающего списка)
@@ -219,6 +219,16 @@ def init_db():
                        ("final_trip_date", "TEXT"), ("reject_date", "TEXT"),
                        ("advert", "TEXT")]:
         _add_column_if_missing(cursor, "invoices_archive", _col, _typ)
+
+    # Статус «Задержка прибытия» переименован в «Задержка поставки».
+    # Переносим старые записи, чтобы фильтр по новому статусу находил счета.
+    for _tbl in ("invoices", "invoices_archive"):
+        cursor.execute(
+            f"UPDATE {_tbl} SET status = 'Задержка поставки' "
+            f"WHERE status = 'Задержка прибытия'")
+    cursor.execute(
+        "UPDATE auto_in_transit SET delay_status = 'Задержка поставки' "
+        "WHERE delay_status = 'Задержка прибытия'")
 
     conn.commit()
     conn.close()
@@ -503,7 +513,7 @@ def mark_car_arrived(car_id, fact_arrival_date):
     """Отмечает авто как прибывшее и переносит связанные счета в 'Прибыл на склад Алматы'."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    link_statuses = ('В пути', 'Задержка прибытия', 'В сборке',
+    link_statuses = ('В пути', DELAY_STATUS, 'В сборке',
                      'Прибыл на склад Алматы', 'Готов к отгрузке клиенту')
     status_ph = ",".join("?" * len(link_statuses))
     cursor.execute("SELECT rkz_number, doc_number FROM auto_in_transit WHERE id = ?", (car_id,))
@@ -614,19 +624,22 @@ def save_car_extra_items(car_id, items):
     return cleaned
 
 
-# ========== ЗАДЕРЖКА ПРИБЫТИЯ ==========
+# ========== ЗАДЕРЖКА ПОСТАВКИ ==========
 
-DELAY_STATUS = "Задержка прибытия"
+DELAY_STATUS = "Задержка поставки"
+# Прежнее название статуса — нужно для миграции старых записей
+DELAY_STATUS_LEGACY = "Задержка прибытия"
 
 
 def _is_manual_delay(value):
-    """Ручная отметка задержки: текст «Задержка прибытия», 1/да/true."""
+    """Ручная отметка задержки: текст статуса, 1/да/true."""
     return str(value or "").strip().lower() in (
-        "1", "да", "true", "yes", "задержка прибытия")
+        "1", "да", "true", "yes",
+        DELAY_STATUS.lower(), DELAY_STATUS_LEGACY.lower())
 
 
 def is_car_delayed(car):
-    """Задержка прибытия: ручная отметка или план. дата раньше сегодняшней."""
+    """Задержка поставки: ручная отметка или план. дата раньше сегодняшней."""
     if car is None or not hasattr(car, "get"):
         return False
     if _is_manual_delay(car.get("delay_status")):
@@ -636,7 +649,7 @@ def is_car_delayed(car):
 
 
 def sync_all_car_delays():
-    """Приводит статусы счетов активных авто к «Задержка прибытия» / «В пути».
+    """Приводит статусы счетов активных авто к «Задержка поставки» / «В пути».
 
     Задержка = ручная отметка delay_status или плановая дата прибытия раньше
     сегодняшней. Возвращает [(car_id, delayed), ...].
@@ -661,8 +674,8 @@ def sync_all_car_delays():
         else:
             cursor.execute(
                 "UPDATE invoices SET status = 'В пути' "
-                "WHERE auto_id = ? AND status = ?",
-                (car_id, DELAY_STATUS))
+                "WHERE auto_id = ? AND status IN (?, ?)",
+                (car_id, DELAY_STATUS, DELAY_STATUS_LEGACY))
         result.append((int(car_id), delayed))
     conn.commit()
     conn.close()
@@ -670,7 +683,7 @@ def sync_all_car_delays():
 
 
 def set_car_delay_status(car_id, delayed):
-    """Ставит/снимает ручную отметку «Задержка прибытия» и обновляет счета."""
+    """Ставит/снимает ручную отметку «Задержка поставки» и обновляет счета."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(
@@ -699,7 +712,7 @@ def link_auto_to_invoices_by_rkz(car_id, rkz_numbers, status_list=None):
         conn.close()
         return 0
     placeholders = ",".join("?" * len(cleaned))
-    statuses = status_list if status_list else ['В пути', 'В сборке']
+    statuses = status_list if status_list else ['В пути', 'В сборке', DELAY_STATUS]
     status_ph = ",".join("?" * len(statuses))
     cursor.execute(
         f"UPDATE invoices SET auto_id = ? WHERE doc_number IN ({placeholders}) "
@@ -728,7 +741,7 @@ def link_auto_to_invoices_by_pkcb(car_id, pkcb_numbers, status_list=None):
         conn.close()
         return 0
     placeholders = ",".join("?" * len(cleaned))
-    statuses = status_list if status_list else ['В пути', 'В сборке']
+    statuses = status_list if status_list else ['В пути', 'В сборке', DELAY_STATUS]
     status_ph = ",".join("?" * len(statuses))
     cursor.execute(
         f"UPDATE invoices SET auto_id = ? WHERE pkcb IN ({placeholders}) "

@@ -59,13 +59,13 @@ def show_replenishment_page():
         )
         car_delayed = is_car_delayed(car)
         if car_delayed:
-            header_title += " | ⚠️ Задержка прибытия"
+            header_title += " | ⚠️ Задержка поставки"
 
         is_expanded = True if search_query else False
 
         with st.expander(header_title, expanded=is_expanded):
             if car_delayed:
-                st.warning("⚠️ Задержка прибытия: плановая дата уже прошла "
+                st.warning("⚠️ Задержка поставки: плановая дата уже прошла "
                            "или отмечена вручную в админ-панели.")
             doc_col1, doc_col2 = st.columns(2)
 

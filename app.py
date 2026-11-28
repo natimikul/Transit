@@ -56,7 +56,7 @@ from database import (
 
 # Инициализируем базу данных при старте
 init_db()
-# Авто, у которых плановая дата прибытия уже прошла, → счета «Задержка прибытия»
+# Авто, у которых плановая дата прибытия уже прошла, → счета «Задержка поставки»
 sync_all_car_delays()
 
 # --- НАСТРОЙКА СТРАНИЦЫ И СТИЛЕЙ КНОПОК ---
@@ -140,7 +140,7 @@ is_admin = st.session_state.get("admin_status") == "admin"
 
 list_all_statuses = [
     "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-    "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+    "Задержка поставки", "Прибыл на склад Алматы",
     "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
 ]
 
@@ -220,6 +220,13 @@ with col_main:
         today_dt = datetime.date.today()
         default_start_dt = today_dt - datetime.timedelta(days=90)
         date_range = st.date_input("Период поиска (по Дате счета):", value=(default_start_dt, today_dt))
+        # После переименования статуса в session_state мог остаться старый
+        # вариант — убираем его, иначе фильтр молча ничего не находит.
+        _sel_statuses = st.session_state.get('selected_dropdown_statuses')
+        if _sel_statuses:
+            _valid_sel = [s for s in _sel_statuses if s in list_all_statuses]
+            if _valid_sel != _sel_statuses:
+                st.session_state['selected_dropdown_statuses'] = _valid_sel
         selected_dropdown_statuses = st.multiselect("📊 Отфильтровать по статусу счетов:", list_all_statuses, key='selected_dropdown_statuses')
 
 # Клик по авто в мини-таблице = выгрузка Excel-накладной (детали на главной не выводим)
@@ -238,7 +245,7 @@ def _car_docs_xlsx(_car_row, _car_id):
             _pkcb_s = _all_inv["pkcb"].fillna("").astype(str).str.strip()
             _doc_s = _all_inv["doc_number"].fillna("").astype(str).str.strip()
             # Счета по ПкЦБ авто И по № СЧКЗ/РКЗ из документов авто
-            _mask = (_pkcb_s.isin(_all_docs) | _doc_s.isin(_all_docs)) & _all_inv["status"].isin(["В пути", "В сборке"])
+            _mask = (_pkcb_s.isin(_all_docs) | _doc_s.isin(_all_docs)) & _all_inv["status"].isin(["В пути", "Задержка поставки", "В сборке"])
             _extra = _all_inv.loc[_mask]
             if not _extra.empty:
                 _have_ids = set(_inv_car["id"].astype(int)) if (
@@ -407,7 +414,7 @@ with col_cars:
             }
         )
         if _delayed_cars:
-            st.warning("⚠️ Задержка прибытия: " + ", ".join(
+            st.warning("⚠️ Задержка поставки: " + ", ".join(
                 f"Авто #{cid}" for cid in _delayed_cars))
 
         # Нажатие по авто внутри таблицы (галочка строки) = скачивание XLS
@@ -2254,7 +2261,7 @@ if current_mode == "Админ-панель" and is_admin:
                 car_id = car['id']
                 flag = "🇷🇺" if "росс" in str(car.get('country', '')).lower() or "рф" in str(car.get('country', '')).lower() else "🇧🇾"
                 repl_tag = " | 📦 пополнение склада" if int(car.get('is_replenishment', 0) or 0) else ""
-                delay_tag = " | ⚠️ Задержка прибытия" if is_car_delayed(car) else ""
+                delay_tag = " | ⚠️ Задержка поставки" if is_car_delayed(car) else ""
                 header = f"{flag} Авто #{car_id} | Отгрузка: {car.get('dispatch_date', '-')} | {car.get('location', '-')} | План: {car.get('estimated_arrival', '-')}{repl_tag}{delay_tag}"
 
                 with st.expander(header, expanded=False):
@@ -2275,9 +2282,9 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_est_arrival = st.text_input("Плановая дата прибытия", value=car.get('estimated_arrival', ''), key=f"edit_est_arrival_{car_id}")
                         _manual_delay = str(car.get('delay_status') or '').strip() != ""
                         edit_delay = st.checkbox(
-                            "⚠️ Задержка прибытия (вручную)", value=_manual_delay,
+                            "⚠️ Задержка поставки (вручную)", value=_manual_delay,
                             key=f"edit_delay_{car_id}",
-                            help="Счета авто получат статус «Задержка прибытия». "
+                            help="Счета авто получат статус «Задержка поставки». "
                                  "Также ставится автоматически, если плановая дата уже прошла.")
                     with col_e3:
                         edit_docs = st.text_area("№ документов (ПкЦБ) — по одному в строке",
@@ -2290,7 +2297,7 @@ if current_mode == "Админ-панель" and is_admin:
                         edit_rkz_clean = "\n".join([d.strip() for d in edit_rkz.split("\n") if d.strip()])
                         update_car(car_id, edit_dispatch, edit_country, edit_location,
                                    edit_docs_clean, edit_rkz_clean, edit_est_arrival)
-                        link_statuses = ['В пути', 'Задержка прибытия', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
+                        link_statuses = ['В пути', 'Задержка поставки', 'В сборке', 'Прибыл на склад Алматы', 'Готов к отгрузке клиенту']
                         linked_rkz = link_auto_to_invoices_by_rkz(car_id, [r for r in edit_rkz_clean.split("\n") if r.strip()], status_list=link_statuses)
                         linked_pkcb = link_auto_to_invoices_by_pkcb(car_id, [d for d in edit_docs_clean.split("\n") if d.strip()], status_list=link_statuses)
                         # Ручная отметка задержки + пересчёт по плановой дате
@@ -3045,7 +3052,7 @@ if current_mode == "Админ-панель" and is_admin:
             with col_f6:
                 new_status = st.selectbox("Статус", [
                     "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                    "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                    "Задержка поставки", "Прибыл на склад Алматы",
                     "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
                 ])
             with col_f7:
@@ -3107,11 +3114,19 @@ if current_mode == "Админ-панель" and is_admin:
         with db_filter_col1:
             db_search = st.text_input("🔍 Поиск по № счета или клиенту:", key="db_search")
         with db_filter_col2:
-            db_status_filter = st.multiselect("Фильтр по статусу:", [
+            _db_status_opts = [
                 "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                "Задержка поставки", "Прибыл на склад Алматы",
                 "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
-            ], key="db_status_filter")
+            ]
+            # Старый статус в session_state убираем, чтобы фильтр работал
+            _db_sel = st.session_state.get("db_status_filter")
+            if _db_sel:
+                _db_valid = [s for s in _db_sel if s in _db_status_opts]
+                if _db_valid != _db_sel:
+                    st.session_state["db_status_filter"] = _db_valid
+            db_status_filter = st.multiselect("Фильтр по статусу:", _db_status_opts,
+                                              key="db_status_filter")
 
         all_invoices = get_all_invoices()
         if not all_invoices.empty:
@@ -3167,7 +3182,7 @@ if current_mode == "Админ-панель" and is_admin:
                     'ПкЦБ': st.column_config.TextColumn(),
                     'Статус': st.column_config.SelectboxColumn(options=[
                         "Создан", "В сборке", "В сборке, ожидает разрешения", "В пути",
-                        "Задержка прибытия", "Задержка поставки", "Прибыл на склад Алматы",
+                        "Задержка поставки", "Прибыл на склад Алматы",
                         "Готов к отгрузке клиенту", "Отгружено клиенту", "Отказ"
                     ]),
                     'Плановая дата отгрузки': st.column_config.TextColumn(help="ДД.ММ.ГГГГ"),
@@ -3434,7 +3449,7 @@ elif current_mode == "В сборке":
 
 elif current_mode == "Отгружено":
     st.session_state.current_report = build_report(
-        cols_all, status_list=["В пути", "Задержка прибытия"],
+        cols_all, status_list=["В пути", "Задержка поставки"],
         invoice_text=invoice_input, client_text=client_input,
         advert_text=advert_input,
         start_dt=start_filter, end_dt=end_filter,
